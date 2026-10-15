@@ -122,6 +122,16 @@ export const VigiliaFace: React.FC = () => {
   const [cameraFacing, setCameraFacing] = useState<'user' | 'environment'>('user');
   const touchPointRef = useRef<{ x: number; y: number; active: boolean; pulse: number } | null>(null);
 
+  // Multitouch gesture state: pinch-to-zoom (focal scale) & two-finger rotation (3D perspective roll)
+  const userZoomRef = useRef(1.0);
+  const userRotationRef = useRef(0);
+  const touchGestureRef = useRef<{ initialDist: number; initialAngle: number; baseScale: number; baseRotation: number } | null>(null);
+  const [gestureHUD, setGestureHUD] = useState<{ scale: number; rotation: number; active: boolean }>({
+    scale: 1.0,
+    rotation: 0,
+    active: false
+  });
+
   // Interactive controls
   const [sensitivity, setSensitivity] = useState(1.5);
   const [cameraOpacity, setCameraOpacity] = useState(0.45);
@@ -484,15 +494,28 @@ export const VigiliaFace: React.FC = () => {
   };
 
   const handleTouchStart = (e: React.TouchEvent<HTMLCanvasElement>) => {
-    const canvas = canvasRef.current;
-    if (!canvas) return;
-    const rect = canvas.getBoundingClientRect();
-    const t = e.touches[0];
-    if (!t) return;
-    const normX = Math.max(0, Math.min(1, (t.clientX - rect.left) / rect.width));
-    const normY = Math.max(0, Math.min(1, (t.clientY - rect.top) / rect.height));
-    const actualX = cameraFacing === 'user' ? 1 - normX : normX;
-    touchPointRef.current = { x: actualX, y: normY, active: true, pulse: 1.0 };
+    if (e.touches.length === 2) {
+      const t1 = e.touches[0];
+      const t2 = e.touches[1];
+      const dist = Math.hypot(t2.clientX - t1.clientX, t2.clientY - t1.clientY);
+      const angle = Math.atan2(t2.clientY - t1.clientY, t2.clientX - t1.clientX);
+      touchGestureRef.current = {
+        initialDist: dist,
+        initialAngle: angle,
+        baseScale: userZoomRef.current,
+        baseRotation: userRotationRef.current
+      };
+      setGestureHUD({ scale: userZoomRef.current, rotation: userRotationRef.current, active: true });
+    } else if (e.touches.length === 1) {
+      const canvas = canvasRef.current;
+      if (!canvas) return;
+      const rect = canvas.getBoundingClientRect();
+      const t = e.touches[0];
+      const normX = Math.max(0, Math.min(1, (t.clientX - rect.left) / rect.width));
+      const normY = Math.max(0, Math.min(1, (t.clientY - rect.top) / rect.height));
+      const actualX = cameraFacing === 'user' ? 1 - normX : normX;
+      touchPointRef.current = { x: actualX, y: normY, active: true, pulse: 1.0 };
+    }
 
     if (audioCtxRef.current && audioCtxRef.current.state === 'suspended') {
       audioCtxRef.current.resume().catch(() => {});
@@ -500,21 +523,59 @@ export const VigiliaFace: React.FC = () => {
   };
 
   const handleTouchMove = (e: React.TouchEvent<HTMLCanvasElement>) => {
-    const canvas = canvasRef.current;
-    if (!canvas) return;
-    const rect = canvas.getBoundingClientRect();
-    const t = e.touches[0];
-    if (!t) return;
-    const normX = Math.max(0, Math.min(1, (t.clientX - rect.left) / rect.width));
-    const normY = Math.max(0, Math.min(1, (t.clientY - rect.top) / rect.height));
-    const actualX = cameraFacing === 'user' ? 1 - normX : normX;
-    touchPointRef.current = { x: actualX, y: normY, active: true, pulse: 1.0 };
+    if (e.touches.length === 2 && touchGestureRef.current) {
+      const t1 = e.touches[0];
+      const t2 = e.touches[1];
+      const currentDist = Math.hypot(t2.clientX - t1.clientX, t2.clientY - t1.clientY);
+      const currentAngle = Math.atan2(t2.clientY - t1.clientY, t2.clientX - t1.clientX);
+      
+      const scaleDelta = currentDist / Math.max(10, touchGestureRef.current.initialDist);
+      const newScale = Math.min(3.5, Math.max(0.4, touchGestureRef.current.baseScale * scaleDelta));
+      const angleDelta = currentAngle - touchGestureRef.current.initialAngle;
+      const newRotation = touchGestureRef.current.baseRotation + angleDelta;
+      
+      userZoomRef.current = newScale;
+      userRotationRef.current = newRotation;
+      setGestureHUD({ scale: newScale, rotation: newRotation, active: true });
+    } else if (e.touches.length === 1 && !touchGestureRef.current) {
+      const canvas = canvasRef.current;
+      if (!canvas) return;
+      const rect = canvas.getBoundingClientRect();
+      const t = e.touches[0];
+      const normX = Math.max(0, Math.min(1, (t.clientX - rect.left) / rect.width));
+      const normY = Math.max(0, Math.min(1, (t.clientY - rect.top) / rect.height));
+      const actualX = cameraFacing === 'user' ? 1 - normX : normX;
+      touchPointRef.current = { x: actualX, y: normY, active: true, pulse: 1.0 };
+    }
   };
 
-  const handleTouchEnd = () => {
-    if (touchPointRef.current) {
+  const handleTouchEnd = (e: React.TouchEvent<HTMLCanvasElement>) => {
+    if (e.touches.length < 2) {
+      touchGestureRef.current = null;
+      setTimeout(() => {
+        setGestureHUD(prev => ({ ...prev, active: false }));
+      }, 2000);
+    }
+    if (e.touches.length === 0 && touchPointRef.current) {
       touchPointRef.current.active = false;
     }
+  };
+
+  const handleWheel = (e: React.WheelEvent<HTMLCanvasElement>) => {
+    if (e.ctrlKey) {
+      e.preventDefault();
+      const zoomFactor = e.deltaY < 0 ? 1.08 : 0.92;
+      const newScale = Math.min(3.5, Math.max(0.4, userZoomRef.current * zoomFactor));
+      userZoomRef.current = newScale;
+      setGestureHUD(prev => ({ ...prev, scale: newScale, active: true }));
+      setTimeout(() => setGestureHUD(prev => ({ ...prev, active: false })), 1500);
+    }
+  };
+
+  const reset3DTransform = () => {
+    userZoomRef.current = 1.0;
+    userRotationRef.current = 0;
+    setGestureHUD({ scale: 1.0, rotation: 0, active: false });
   };
 
   const handlePointerDown = (e: React.PointerEvent<HTMLCanvasElement>) => {
@@ -1036,13 +1097,15 @@ export const VigiliaFace: React.FC = () => {
         y: pt.y * ch
       });
 
-      // Global spatial transformation
+      // Global spatial transformation (Multitouch 3D Zoom/Rotate + Head Tracking)
+      ctx.translate(cw / 2, ch / 2);
+      ctx.scale(userZoomRef.current, userZoomRef.current);
+      ctx.rotate(userRotationRef.current);
       if (trackHead && realFaceDetectedRef.current) {
-        ctx.translate(cw / 2, ch / 2);
         ctx.rotate(-sm.headRoll * 0.95);
         ctx.scale(sm.faceScale, sm.faceScale);
-        ctx.translate(-cw / 2, -ch / 2);
       }
+      ctx.translate(-cw / 2, -ch / 2);
 
       const bothEyesClosed = sm.blinkLeft > 0.82 && sm.blinkRight > 0.82;
 
@@ -1647,8 +1710,27 @@ export const VigiliaFace: React.FC = () => {
             onPointerMove={handlePointerMove}
             onPointerUp={handlePointerUp}
             onPointerLeave={handlePointerUp}
+            onWheel={handleWheel}
+            onDoubleClick={reset3DTransform}
             className="w-full h-full object-contain touch-none cursor-crosshair"
           />
+
+          {/* Multitouch 3D Perspective & Zoom HUD Badge */}
+          {(gestureHUD.active || userZoomRef.current !== 1.0 || userRotationRef.current !== 0) && (
+            <div className="absolute top-4 left-4 z-30 flex items-center gap-2 bg-black/85 border border-green-500/80 px-3 py-1.5 rounded-sm backdrop-blur-md text-[10px] text-green-300 font-mono shadow-[0_0_15px_rgba(34,197,94,0.3)] select-none">
+              <Sparkles size={12} className="text-green-400 animate-pulse" />
+              <span>ZOOM: {userZoomRef.current.toFixed(2)}×</span>
+              <span className="text-green-800">|</span>
+              <span>ROT 3D: {((userRotationRef.current * 180) / Math.PI).toFixed(0)}°</span>
+              <button
+                onClick={(e) => { e.stopPropagation(); reset3DTransform(); }}
+                className="ml-2 px-1.5 py-0.5 bg-green-950 border border-green-700 hover:border-green-400 text-green-300 hover:text-white rounded text-[9px] font-bold active:scale-95 transition-all"
+                title="Restablecer Escala y Perspectiva 3D"
+              >
+                RESET
+              </button>
+            </div>
+          )}
 
           {/* Installation Mode Exit Button */}
           {isInstallationMode && (

@@ -237,6 +237,16 @@ export const VigiliaCore: React.FC<VigiliaCoreProps> = ({ userName }) => {
   const heatmapGrid = useRef(new Float32Array(40 * 30).fill(0));
   const scanLineY = useRef(0); 
 
+  // Multitouch gesture state: pinch-to-zoom (focal scale) & two-finger rotation (3D perspective roll)
+  const focalScaleRef = useRef(1.0);
+  const perspectiveRollRef = useRef(0);
+  const touchGestureRef = useRef<{ initialDist: number; initialAngle: number; baseScale: number; baseRotation: number } | null>(null);
+  const [gestureHUD, setGestureHUD] = useState<{ scale: number; rotation: number; active: boolean }>({
+    scale: 1.0,
+    rotation: 0,
+    active: false
+  });
+
   useEffect(() => {
       const points = [];
       for(let i=0; i < MESH_COLS * MESH_ROWS; i++) {
@@ -762,8 +772,10 @@ export const VigiliaCore: React.FC<VigiliaCoreProps> = ({ userName }) => {
         const finalX = cameraPanRef.current.x + jitterX;
         const finalY = cameraPanRef.current.y + jitterY;
 
-        const scaleXVal = cameraFacing === 'user' ? -targetScale : targetScale;
-        videoRef.current.style.transform = `translate(${finalX}%, ${finalY}%) scaleX(${scaleXVal}) scaleY(${targetScale})`;
+        const scaleXVal = cameraFacing === 'user' ? -targetScale * focalScaleRef.current : targetScale * focalScaleRef.current;
+        const scaleYVal = targetScale * focalScaleRef.current;
+        const rotDeg = (perspectiveRollRef.current * 180) / Math.PI;
+        videoRef.current.style.transform = `translate(${finalX}%, ${finalY}%) rotate(${rotDeg.toFixed(2)}deg) scaleX(${scaleXVal.toFixed(3)}) scaleY(${scaleYVal.toFixed(3)})`;
         
         const baseFilterStr = CAMERA_FILTERS[currentFilter].filter === 'none' ? '' : CAMERA_FILTERS[currentFilter].filter;
         const dynamicSat = 100 + (bandsRef.current.treble / 3); 
@@ -798,6 +810,14 @@ export const VigiliaCore: React.FC<VigiliaCoreProps> = ({ userName }) => {
                 silenceTimer.current = 0;
             }
         }
+    }
+
+    displayCtx.save();
+    if (focalScaleRef.current !== 1.0 || perspectiveRollRef.current !== 0) {
+      displayCtx.translate(displayCanvas.width / 2, displayCanvas.height / 2);
+      displayCtx.scale(focalScaleRef.current, focalScaleRef.current);
+      displayCtx.rotate(perspectiveRollRef.current);
+      displayCtx.translate(-displayCanvas.width / 2, -displayCanvas.height / 2);
     }
 
     if (currentMode === MODES.POETIC.id || poeticTrigger) {
@@ -964,6 +984,8 @@ export const VigiliaCore: React.FC<VigiliaCoreProps> = ({ userName }) => {
             }
         }
     }
+
+    displayCtx.restore();
     
     frameCounterRef.current += 1;
     if (frameCounterRef.current % 10 === 0) {
@@ -1128,13 +1150,72 @@ export const VigiliaCore: React.FC<VigiliaCoreProps> = ({ userName }) => {
     }
   };
 
-  const handleCanvasTouch = (e: React.TouchEvent<HTMLDivElement | HTMLCanvasElement>) => {
-    const touch = e.touches[0];
-    if (touch) handleCanvasInteraction(touch.clientX, touch.clientY);
+  const handleTouchStart = (e: React.TouchEvent<HTMLDivElement>) => {
+    if (e.touches.length === 2) {
+      const t1 = e.touches[0];
+      const t2 = e.touches[1];
+      const dist = Math.hypot(t2.clientX - t1.clientX, t2.clientY - t1.clientY);
+      const angle = Math.atan2(t2.clientY - t1.clientY, t2.clientX - t1.clientX);
+      touchGestureRef.current = {
+        initialDist: dist,
+        initialAngle: angle,
+        baseScale: focalScaleRef.current,
+        baseRotation: perspectiveRollRef.current
+      };
+      setGestureHUD({ scale: focalScaleRef.current, rotation: perspectiveRollRef.current, active: true });
+    } else if (e.touches.length === 1) {
+      handleCanvasInteraction(e.touches[0].clientX, e.touches[0].clientY);
+    }
   };
 
-  const handleCanvasPointer = (e: React.PointerEvent<HTMLDivElement | HTMLCanvasElement>) => {
-    if (e.buttons > 0 || e.pointerType === 'touch') {
+  const handleTouchMove = (e: React.TouchEvent<HTMLDivElement>) => {
+    if (e.touches.length === 2 && touchGestureRef.current) {
+      const t1 = e.touches[0];
+      const t2 = e.touches[1];
+      const currentDist = Math.hypot(t2.clientX - t1.clientX, t2.clientY - t1.clientY);
+      const currentAngle = Math.atan2(t2.clientY - t1.clientY, t2.clientX - t1.clientX);
+      
+      const scaleDelta = currentDist / Math.max(10, touchGestureRef.current.initialDist);
+      const newScale = Math.min(3.5, Math.max(0.4, touchGestureRef.current.baseScale * scaleDelta));
+      const angleDelta = currentAngle - touchGestureRef.current.initialAngle;
+      const newRotation = touchGestureRef.current.baseRotation + angleDelta;
+      
+      focalScaleRef.current = newScale;
+      perspectiveRollRef.current = newRotation;
+      setGestureHUD({ scale: newScale, rotation: newRotation, active: true });
+    } else if (e.touches.length === 1 && !touchGestureRef.current) {
+      handleCanvasInteraction(e.touches[0].clientX, e.touches[0].clientY);
+    }
+  };
+
+  const handleTouchEnd = (e: React.TouchEvent<HTMLDivElement>) => {
+    if (e.touches.length < 2) {
+      touchGestureRef.current = null;
+      setTimeout(() => {
+        setGestureHUD(prev => ({ ...prev, active: false }));
+      }, 2000);
+    }
+  };
+
+  const handleWheel = (e: React.WheelEvent<HTMLDivElement>) => {
+    if (e.ctrlKey) {
+      e.preventDefault();
+      const zoomFactor = e.deltaY < 0 ? 1.08 : 0.92;
+      const newScale = Math.min(3.5, Math.max(0.4, focalScaleRef.current * zoomFactor));
+      focalScaleRef.current = newScale;
+      setGestureHUD(prev => ({ ...prev, scale: newScale, active: true }));
+      setTimeout(() => setGestureHUD(prev => ({ ...prev, active: false })), 1500);
+    }
+  };
+
+  const reset3DTransform = () => {
+    focalScaleRef.current = 1.0;
+    perspectiveRollRef.current = 0;
+    setGestureHUD({ scale: 1.0, rotation: 0, active: false });
+  };
+
+  const handleCanvasPointer = (e: React.PointerEvent<HTMLDivElement>) => {
+    if ((e.buttons > 0 || e.pointerType === 'touch') && !touchGestureRef.current) {
       handleCanvasInteraction(e.clientX, e.clientY);
     }
   };
@@ -1270,11 +1351,31 @@ export const VigiliaCore: React.FC<VigiliaCoreProps> = ({ userName }) => {
 
         <div 
           className={`relative bg-black rounded-sm flex-1 overflow-hidden flex items-center justify-center group touch-none cursor-crosshair ${!galleryMode ? 'min-h-[350px] border border-green-900/30' : 'w-full h-full'}`}
-          onTouchStart={handleCanvasTouch}
-          onTouchMove={handleCanvasTouch}
+          onTouchStart={handleTouchStart}
+          onTouchMove={handleTouchMove}
+          onTouchEnd={handleTouchEnd}
+          onTouchCancel={handleTouchEnd}
           onPointerDown={handleCanvasPointer}
           onPointerMove={handleCanvasPointer}
+          onWheel={handleWheel}
+          onDoubleClick={reset3DTransform}
         >
+          {/* Multitouch 3D Perspective & Zoom HUD Badge */}
+          {(gestureHUD.active || focalScaleRef.current !== 1.0 || perspectiveRollRef.current !== 0) && (
+            <div className="absolute top-4 left-4 z-30 flex items-center gap-2 bg-black/85 border border-green-500/80 px-3 py-1.5 rounded-sm backdrop-blur-md text-[10px] text-green-300 font-mono shadow-[0_0_15px_rgba(34,197,94,0.3)] select-none">
+              <Sparkles size={12} className="text-green-400 animate-pulse" />
+              <span>ZOOM: {focalScaleRef.current.toFixed(2)}×</span>
+              <span className="text-green-800">|</span>
+              <span>ROT 3D: {((perspectiveRollRef.current * 180) / Math.PI).toFixed(0)}°</span>
+              <button
+                onClick={(e) => { e.stopPropagation(); reset3DTransform(); }}
+                className="ml-2 px-1.5 py-0.5 bg-green-950 border border-green-700 hover:border-green-400 text-green-300 hover:text-white rounded text-[9px] font-bold active:scale-95 transition-all"
+                title="Restablecer Escala y Perspectiva 3D"
+              >
+                RESET
+              </button>
+            </div>
+          )}
           {!isSystemActive && !isScanning && (
             <div className="text-center text-green-900/80 p-4 max-w-sm flex flex-col items-center z-20">
               <Aperture className="w-16 h-16 mx-auto mb-3 opacity-30 text-green-500" />
