@@ -2,7 +2,8 @@ import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { 
   Camera, Eye, EyeOff, Volume2, VolumeX, Maximize, Minimize, 
   Sparkles, Activity, Shield, RefreshCw, Save, Film, Layers, 
-  UserCheck, UserX, SlidersHorizontal, Palette, Sliders, Zap
+  UserCheck, UserX, SlidersHorizontal, Palette, Sliders, Zap,
+  FlipHorizontal, Smartphone, Check
 } from 'lucide-react';
 import { FilesetResolver, FaceLandmarker } from '@mediapipe/tasks-vision';
 
@@ -115,6 +116,11 @@ export const VigiliaFace: React.FC = () => {
   const [activeMode, setActiveMode] = useState<keyof typeof MODES>('GESTO');
   const [activePalette, setActivePalette] = useState<PaletteType>('ESMERALDA');
   const [cameraFilter, setCameraFilter] = useState<CameraFilterType>('CYBER_DARK');
+
+  // Mobile responsiveness & touch state
+  const [mobileTab, setMobileTab] = useState<'CANVAS' | 'CONTROLS'>('CANVAS');
+  const [cameraFacing, setCameraFacing] = useState<'user' | 'environment'>('user');
+  const touchPointRef = useRef<{ x: number; y: number; active: boolean; pulse: number } | null>(null);
 
   // Interactive controls
   const [sensitivity, setSensitivity] = useState(1.5);
@@ -425,8 +431,8 @@ export const VigiliaFace: React.FC = () => {
     };
   }, []);
 
-  // Initialize Camera cleanly at optimal 640x480 resolution (smooth & fast)
-  const startCamera = async () => {
+  // Initialize Camera cleanly with facing mode parameter
+  const startCamera = async (facing: 'user' | 'environment' = cameraFacing) => {
     setCameraError(null);
     if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
       setCameraError("Sin soporte de cámara. Modo simulado disponible.");
@@ -434,19 +440,26 @@ export const VigiliaFace: React.FC = () => {
       return;
     }
 
+    if (videoRef.current?.srcObject) {
+      (videoRef.current.srcObject as MediaStream).getTracks().forEach(t => t.stop());
+      videoRef.current.srcObject = null;
+    }
+
     try {
       let stream: MediaStream;
       try {
         stream = await navigator.mediaDevices.getUserMedia({
           video: {
-            facingMode: 'user',
+            facingMode: { ideal: facing },
             width: { ideal: 640 },
             height: { ideal: 480 },
             frameRate: { ideal: 30, max: 30 }
           }
         });
       } catch {
-        stream = await navigator.mediaDevices.getUserMedia({ video: true });
+        stream = await navigator.mediaDevices.getUserMedia({
+          video: { facingMode: facing }
+        });
       }
 
       if (videoRef.current) {
@@ -459,8 +472,80 @@ export const VigiliaFace: React.FC = () => {
         setIsSimulated(false);
       }
     } catch (err: any) {
-      setCameraError("No se pudo iniciar la cámara.");
+      setCameraError("No se pudo iniciar la cámara en este dispositivo. Modo simulado activo.");
       setIsSimulated(true);
+    }
+  };
+
+  const flipCamera = async () => {
+    const nextFacing = cameraFacing === 'user' ? 'environment' : 'user';
+    setCameraFacing(nextFacing);
+    await startCamera(nextFacing);
+  };
+
+  const handleTouchStart = (e: React.TouchEvent<HTMLCanvasElement>) => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const rect = canvas.getBoundingClientRect();
+    const t = e.touches[0];
+    if (!t) return;
+    const normX = Math.max(0, Math.min(1, (t.clientX - rect.left) / rect.width));
+    const normY = Math.max(0, Math.min(1, (t.clientY - rect.top) / rect.height));
+    const actualX = cameraFacing === 'user' ? 1 - normX : normX;
+    touchPointRef.current = { x: actualX, y: normY, active: true, pulse: 1.0 };
+
+    if (audioCtxRef.current && audioCtxRef.current.state === 'suspended') {
+      audioCtxRef.current.resume().catch(() => {});
+    }
+  };
+
+  const handleTouchMove = (e: React.TouchEvent<HTMLCanvasElement>) => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const rect = canvas.getBoundingClientRect();
+    const t = e.touches[0];
+    if (!t) return;
+    const normX = Math.max(0, Math.min(1, (t.clientX - rect.left) / rect.width));
+    const normY = Math.max(0, Math.min(1, (t.clientY - rect.top) / rect.height));
+    const actualX = cameraFacing === 'user' ? 1 - normX : normX;
+    touchPointRef.current = { x: actualX, y: normY, active: true, pulse: 1.0 };
+  };
+
+  const handleTouchEnd = () => {
+    if (touchPointRef.current) {
+      touchPointRef.current.active = false;
+    }
+  };
+
+  const handlePointerDown = (e: React.PointerEvent<HTMLCanvasElement>) => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const rect = canvas.getBoundingClientRect();
+    const normX = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
+    const normY = Math.max(0, Math.min(1, (e.clientY - rect.top) / rect.height));
+    const actualX = cameraFacing === 'user' ? 1 - normX : normX;
+    touchPointRef.current = { x: actualX, y: normY, active: true, pulse: 1.0 };
+
+    if (audioCtxRef.current && audioCtxRef.current.state === 'suspended') {
+      audioCtxRef.current.resume().catch(() => {});
+    }
+  };
+
+  const handlePointerMove = (e: React.PointerEvent<HTMLCanvasElement>) => {
+    if (e.buttons > 0 || e.pointerType === 'touch') {
+      const canvas = canvasRef.current;
+      if (!canvas) return;
+      const rect = canvas.getBoundingClientRect();
+      const normX = Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width));
+      const normY = Math.max(0, Math.min(1, (e.clientY - rect.top) / rect.height));
+      const actualX = cameraFacing === 'user' ? 1 - normX : normX;
+      touchPointRef.current = { x: actualX, y: normY, active: true, pulse: 1.0 };
+    }
+  };
+
+  const handlePointerUp = () => {
+    if (touchPointRef.current) {
+      touchPointRef.current.active = false;
     }
   };
 
@@ -660,13 +745,18 @@ export const VigiliaFace: React.FC = () => {
         return;
       }
 
-      const cw = canvas.width || 1280;
-      const ch = canvas.height || 720;
-
-      if (video && video.videoWidth > 0 && canvas.width !== video.videoWidth) {
-        canvas.width = video.videoWidth;
-        canvas.height = video.videoHeight;
+      if (video && video.videoWidth > 0) {
+        if (canvas.width !== video.videoWidth || canvas.height !== video.videoHeight) {
+          canvas.width = video.videoWidth;
+          canvas.height = video.videoHeight;
+        }
+      } else if (canvas.width === 300 || canvas.width === 0) {
+        canvas.width = 960;
+        canvas.height = 720;
       }
+
+      const cw = canvas.width || 960;
+      const ch = canvas.height || 720;
 
       // SYNTHETIC SIMULATION GENERATOR (Only when explicitly activated)
       if (isSimulated) {
@@ -805,6 +895,13 @@ export const VigiliaFace: React.FC = () => {
         gY = (gY * 0.6 + bsGY * 0.4) * sens;
       }
 
+      // Dynamic tactile touch override
+      const activeTouch = touchPointRef.current;
+      if (activeTouch && activeTouch.active) {
+        gX = (activeTouch.x - 0.5) * 2.6 * sens;
+        gY = (activeTouch.y - 0.5) * 2.6 * sens;
+      }
+
       const sm = smoothedMetricsRef.current;
       sm.gazeX += (gX - sm.gazeX) * 0.28;
       sm.gazeY += (gY - sm.gazeY) * 0.28;
@@ -908,8 +1005,10 @@ export const VigiliaFace: React.FC = () => {
       if (showCameraBg && video && video.readyState >= 2 && video.videoWidth > 0 && !isSimulated) {
         ctx.save();
         ctx.globalAlpha = cameraOpacity;
-        ctx.translate(cw, 0);
-        ctx.scale(-1, 1);
+        if (cameraFacing === 'user') {
+          ctx.translate(cw, 0);
+          ctx.scale(-1, 1);
+        }
 
         if (cameraFilter === 'CYBER_DARK') {
           ctx.filter = 'grayscale(80%) contrast(180%) brightness(85%)';
@@ -933,7 +1032,7 @@ export const VigiliaFace: React.FC = () => {
       }
 
       const toScreen = (pt: { x: number; y: number }) => ({
-        x: (1 - pt.x) * cw,
+        x: (cameraFacing === 'user' ? (1 - pt.x) : pt.x) * cw,
         y: pt.y * ch
       });
 
@@ -1213,6 +1312,39 @@ export const VigiliaFace: React.FC = () => {
 
       ctx.restore();
 
+      // TACTILE TOUCH OVERLAY (Mobile / Tablet Direct Feedback)
+      const tactileTouch = touchPointRef.current;
+      if (tactileTouch && tactileTouch.active) {
+        ctx.save();
+        const tx = (cameraFacing === 'user' ? (1 - tactileTouch.x) : tactileTouch.x) * cw;
+        const ty = tactileTouch.y * ch;
+
+        tactileTouch.pulse = (tactileTouch.pulse || 0) + 0.08;
+        const pulseR = 24 + Math.sin(tactileTouch.pulse) * 6;
+
+        ctx.strokeStyle = pal.primary;
+        ctx.lineWidth = 2.5;
+        ctx.shadowColor = pal.primary;
+        ctx.shadowBlur = 14;
+        ctx.beginPath();
+        ctx.arc(tx, ty, pulseR, 0, Math.PI * 2);
+        ctx.stroke();
+
+        ctx.strokeStyle = pal.accent;
+        ctx.lineWidth = 1.5;
+        ctx.beginPath();
+        ctx.moveTo(tx - pulseR - 6, ty);
+        ctx.lineTo(tx + pulseR + 6, ty);
+        ctx.moveTo(tx, ty - pulseR - 6);
+        ctx.lineTo(tx, ty + pulseR + 6);
+        ctx.stroke();
+
+        ctx.fillStyle = pal.primary;
+        ctx.font = 'bold 9px "JetBrains Mono", monospace';
+        ctx.fillText(`TOUCH: ${(tactileTouch.x * 100).toFixed(0)}%, ${(tactileTouch.y * 100).toFixed(0)}%`, tx + pulseR + 8, ty + 3);
+        ctx.restore();
+      }
+
       // IN-CANVAS HUD TELEMETRY OVERLAY
       if (showHUD && !isInstallationMode) {
         ctx.save();
@@ -1404,13 +1536,13 @@ export const VigiliaFace: React.FC = () => {
 
       {/* Top Header */}
       {!isInstallationMode && (
-        <header className="h-12 border-b border-green-950/60 bg-black/85 backdrop-blur-md px-4 flex items-center justify-between z-30 flex-shrink-0">
-          <div className="flex items-center gap-3">
+        <header className="h-11 sm:h-12 border-b border-green-950/60 bg-black/85 backdrop-blur-md px-3 sm:px-4 flex items-center justify-between z-30 flex-shrink-0">
+          <div className="flex items-center gap-2 sm:gap-3">
             <span className="px-2 py-0.5 text-[9px] bg-green-950/80 border border-green-700/50 text-green-400 font-bold tracking-widest rounded-sm">
               MOD · 02
             </span>
-            <h1 className="text-sm font-black tracking-widest text-white flex items-center gap-1.5">
-              VIGILIA <span className="text-green-500">· ROSTRO / FACE INTERFACE</span>
+            <h1 className="text-xs sm:text-sm font-black tracking-widest text-white flex items-center gap-1.5">
+              ROSTRO <span className="text-green-500 font-normal hidden sm:inline">· FACE INTERFACE</span>
             </h1>
 
             {/* Tracking Status indicator */}
@@ -1418,7 +1550,7 @@ export const VigiliaFace: React.FC = () => {
               {faceDetected ? (
                 <span className="flex items-center gap-1.5 text-[10px] text-green-400 font-bold">
                   <UserCheck size={13} className="text-green-400" />
-                  ROSTRO CONECTADO (60 FPS)
+                  ROSTRO CONECTADO ({fps} FPS)
                 </span>
               ) : isSimulated ? (
                 <span className="flex items-center gap-1 text-[10px] text-yellow-400 font-bold">
@@ -1434,7 +1566,17 @@ export const VigiliaFace: React.FC = () => {
             </div>
           </div>
 
-          <div className="flex items-center gap-2 sm:gap-3 text-xs">
+          <div className="flex items-center gap-1.5 sm:gap-2 text-xs">
+            {/* Flip camera front/back */}
+            <button
+              onClick={flipCamera}
+              className="p-1.5 sm:px-2 sm:py-1 rounded-sm border border-green-900/80 hover:border-green-500 bg-green-950/40 text-green-400 text-[10px] font-bold flex items-center gap-1 transition-all min-h-[36px] min-w-[36px] justify-center"
+              title="Voltear Cámara (Frontal / Trasera)"
+            >
+              <FlipHorizontal size={13} />
+              <span className="hidden md:inline">{cameraFacing === 'user' ? 'FRONTAL' : 'TRASERA'}</span>
+            </button>
+
             {/* Toggle Real Camera / Simulated Sensor */}
             <button
               onClick={() => {
@@ -1443,36 +1585,47 @@ export const VigiliaFace: React.FC = () => {
                   startCamera();
                 }
               }}
-              className={`px-2.5 py-1 rounded-sm border text-[9px] font-bold transition-all ${
+              className={`px-2 py-1 rounded-sm border text-[10px] font-bold transition-all min-h-[36px] flex items-center gap-1 ${
                 isSimulated 
                   ? 'bg-yellow-950/60 border-yellow-600 text-yellow-300' 
                   : 'bg-green-950/40 border-green-800 text-green-400 hover:border-green-500'
               }`}
             >
-              {isSimulated ? 'MODO: SIMULADO' : 'MODO: CÁMARA REAL'}
+              <span className="hidden sm:inline">MODO: </span>
+              <span>{isSimulated ? 'SIMULADO' : 'CÁMARA'}</span>
             </button>
 
             {/* Audio Toggle */}
             <button
               onClick={toggleAudio}
-              className={`px-3 py-1 rounded-sm border text-[10px] font-bold flex items-center gap-1.5 transition-all ${
+              className={`p-1.5 sm:px-2.5 sm:py-1 rounded-sm border text-[10px] font-bold flex items-center gap-1 transition-all min-h-[36px] min-w-[36px] justify-center ${
                 audioEnabled 
                   ? 'bg-green-900/60 border-green-500 text-green-300 shadow-[0_0_12px_rgba(34,197,94,0.4)]' 
                   : 'border-neutral-800 text-neutral-500 hover:text-green-400'
               }`}
+              title="Audio Reactivo"
             >
               {audioEnabled ? <Volume2 size={13} /> : <VolumeX size={13} />}
-              {audioEnabled ? 'AUDIO: ON' : 'ACTIVAR AUDIO'}
+              <span className="hidden sm:inline">{audioEnabled ? 'AUDIO: ON' : 'AUDIO: OFF'}</span>
             </button>
 
             {/* Installation Mode Toggle */}
             <button
               onClick={toggleInstallationMode}
-              className="px-3 py-1 rounded-sm border border-green-800 hover:border-green-400 bg-green-950/50 text-green-300 text-[10px] font-bold flex items-center gap-1.5 transition-all hover:bg-green-900/60 shadow-[0_0_10px_rgba(34,197,94,0.2)]"
-              title="Presiona 'F' para alternar pantalla completa"
+              className="p-1.5 sm:px-2.5 sm:py-1 rounded-sm border border-green-800 hover:border-green-400 bg-green-950/50 text-green-300 text-[10px] font-bold flex items-center gap-1 transition-all hover:bg-green-900/60 min-h-[36px] min-w-[36px] justify-center"
+              title="Modo Instalación Pantalla Completa"
             >
               <Maximize size={13} />
-              MODO INSTALACIÓN
+              <span className="hidden md:inline">INSTALACIÓN</span>
+            </button>
+
+            {/* Mobile View Toggle Button (Canvas vs Controls) */}
+            <button
+              onClick={() => setMobileTab(prev => prev === 'CANVAS' ? 'CONTROLS' : 'CANVAS')}
+              className="md:hidden px-2.5 py-1 rounded bg-green-950 border border-green-500 text-green-300 text-[10px] font-bold flex items-center gap-1 min-h-[36px]"
+            >
+              {mobileTab === 'CANVAS' ? <SlidersHorizontal size={13} /> : <Eye size={13} />}
+              <span>{mobileTab === 'CANVAS' ? 'AJUSTES' : 'LIENZO'}</span>
             </button>
           </div>
         </header>
@@ -1481,10 +1634,20 @@ export const VigiliaFace: React.FC = () => {
       {/* Main Workspace */}
       <div className="flex-1 relative flex flex-col md:flex-row overflow-hidden">
         {/* Visual Canvas Display Area */}
-        <div className="flex-1 relative bg-black flex items-center justify-center overflow-hidden">
+        <div className={`flex-1 relative bg-black flex items-center justify-center overflow-hidden ${
+          mobileTab === 'CONTROLS' ? 'hidden md:flex' : 'flex'
+        }`}>
           <canvas 
             ref={canvasRef} 
-            className="w-full h-full object-contain"
+            onTouchStart={handleTouchStart}
+            onTouchMove={handleTouchMove}
+            onTouchEnd={handleTouchEnd}
+            onTouchCancel={handleTouchEnd}
+            onPointerDown={handlePointerDown}
+            onPointerMove={handlePointerMove}
+            onPointerUp={handlePointerUp}
+            onPointerLeave={handlePointerUp}
+            className="w-full h-full object-contain touch-none cursor-crosshair"
           />
 
           {/* Installation Mode Exit Button */}
@@ -1492,7 +1655,7 @@ export const VigiliaFace: React.FC = () => {
             <div className="absolute top-4 right-4 z-40 flex items-center gap-3">
               <button
                 onClick={toggleInstallationMode}
-                className="p-2.5 bg-black/70 hover:bg-black/90 border border-green-800 hover:border-green-400 text-green-400 rounded-full transition-all opacity-30 hover:opacity-100"
+                className="p-3 bg-black/80 hover:bg-black/95 border border-green-800 hover:border-green-400 text-green-400 rounded-full transition-all min-h-[44px] min-w-[44px] flex items-center justify-center"
                 title="Salir del Modo Instalación (Esc o F)"
               >
                 <Minimize size={18} />
@@ -1502,38 +1665,115 @@ export const VigiliaFace: React.FC = () => {
 
           {/* Privacy badge */}
           {!isInstallationMode && (
-            <div className="absolute bottom-2 left-3 z-20 flex items-center gap-2 text-[9px] text-green-800 bg-black/80 px-2.5 py-1 border border-green-950 rounded">
+            <div className="hidden sm:flex absolute bottom-2 left-3 z-20 items-center gap-2 text-[9px] text-green-800 bg-black/80 px-2.5 py-1 border border-green-950 rounded">
               <Shield size={10} className="text-green-600" />
-              <span>El procesamiento del rostro ocurre localmente en este dispositivo. No se envía video al servidor.</span>
+              <span>Cálculo local y privado en tu dispositivo. No se transmite video a la red.</span>
             </div>
           )}
 
           {/* Camera Warning Banner */}
           {cameraError && !isInstallationMode && (
-            <div className="absolute top-4 left-4 z-30 max-w-md bg-yellow-950/90 border border-yellow-700/70 p-3 rounded text-[11px] text-yellow-300 backdrop-blur-md">
+            <div className="absolute top-4 left-4 right-4 sm:right-auto z-30 max-w-md bg-yellow-950/90 border border-yellow-700/70 p-3 rounded text-[11px] text-yellow-300 backdrop-blur-md">
               <p className="text-[10px] text-yellow-200/80 mb-2">{cameraError}</p>
-              <button
-                onClick={startCamera}
-                className="px-3 py-1 bg-yellow-800 hover:bg-yellow-700 text-white rounded text-[9px] font-bold tracking-wider"
-              >
-                REINTENTAR CÁMARA
-              </button>
+              <div className="flex gap-2">
+                <button
+                  onClick={() => startCamera(cameraFacing)}
+                  className="px-3 py-1.5 bg-yellow-800 hover:bg-yellow-700 text-white rounded text-[10px] font-bold tracking-wider min-h-[36px]"
+                >
+                  REINTENTAR CÁMARA
+                </button>
+                <button
+                  onClick={flipCamera}
+                  className="px-3 py-1.5 bg-yellow-950 border border-yellow-700 text-yellow-300 rounded text-[10px] font-bold tracking-wider min-h-[36px]"
+                >
+                  CAMBIAR CÁMARA
+                </button>
+              </div>
             </div>
           )}
 
           {/* Model Loading Spinner */}
           {isLoadingModel && (
-            <div className="absolute inset-0 bg-black/85 flex flex-col items-center justify-center z-40">
+            <div className="absolute inset-0 bg-black/90 flex flex-col items-center justify-center z-40 p-4 text-center">
               <RefreshCw className="w-10 h-10 text-green-500 animate-spin mb-3" />
               <p className="text-xs tracking-widest text-green-400 font-bold">CARGANDO MODELO DE VISIÓN MEDIAPIPE...</p>
-              <p className="text-[10px] text-green-700 mt-1">Cálculo 100% privado en cliente</p>
+              <p className="text-[10px] text-green-700 mt-1">Cálculo local en hardware (GPU/CPU)</p>
+            </div>
+          )}
+
+          {/* Mobile Floating Quick Bar (tactile & ergonomic for phones) */}
+          {!isInstallationMode && (
+            <div className="md:hidden absolute bottom-3 left-3 right-3 z-30 flex items-center justify-between gap-1.5 p-1.5 bg-black/85 backdrop-blur-md border border-green-900/80 rounded-xl shadow-lg">
+              <button
+                onClick={flipCamera}
+                className="p-2.5 rounded bg-green-950/70 border border-green-800 text-green-300 min-h-[44px] min-w-[44px] flex items-center justify-center active:scale-95"
+                title="Voltear Cámara (Frontal / Trasera)"
+              >
+                <FlipHorizontal size={18} />
+              </button>
+
+              <button
+                onClick={toggleAudio}
+                className={`p-2.5 rounded border min-h-[44px] min-w-[44px] flex items-center justify-center active:scale-95 ${
+                  audioEnabled ? 'bg-green-600 text-black border-green-400 font-bold' : 'bg-black/60 border-neutral-800 text-neutral-400'
+                }`}
+                title="Audio Reactivo"
+              >
+                {audioEnabled ? <Volume2 size={18} /> : <VolumeX size={18} />}
+              </button>
+
+              <button
+                onClick={() => {
+                  const keys = Object.keys(MODES) as (keyof typeof MODES)[];
+                  const nextIdx = (keys.indexOf(activeMode) + 1) % keys.length;
+                  setActiveMode(keys[nextIdx]);
+                }}
+                className="flex-1 py-2 px-2.5 rounded bg-green-950/70 border border-green-500/60 text-green-300 text-[10px] font-bold tracking-wider flex items-center justify-center gap-1.5 min-h-[44px] truncate active:scale-95"
+              >
+                <Sparkles size={13} className="text-green-400 flex-shrink-0" />
+                <span className="truncate">{MODES[activeMode].name.split('·')[1]?.trim() || activeMode}</span>
+              </button>
+
+              <button
+                onClick={takeSnapshot}
+                className="p-2.5 rounded bg-green-950/70 border border-green-800 text-green-300 min-h-[44px] min-w-[44px] flex items-center justify-center active:scale-95"
+                title="Capturar Foto HD"
+              >
+                <Save size={18} />
+              </button>
+
+              <button
+                onClick={() => setMobileTab('CONTROLS')}
+                className="py-2 px-3 rounded bg-green-500 text-black font-black text-[11px] tracking-wider flex items-center gap-1 min-h-[44px] shadow-[0_0_12px_rgba(34,197,94,0.4)] active:scale-95"
+              >
+                <SlidersHorizontal size={14} />
+                <span>AJUSTES</span>
+              </button>
             </div>
           )}
         </div>
 
         {/* Technical Control Panel */}
         {!isInstallationMode && (
-          <aside className="w-full md:w-80 lg:w-88 border-t md:border-t-0 md:border-l border-green-950/60 bg-[#040805] p-3 flex flex-col gap-3 overflow-y-auto">
+          <aside className={`w-full md:w-80 lg:w-88 border-t md:border-t-0 md:border-l border-green-950/60 bg-[#040805] p-3 flex flex-col gap-3 overflow-y-auto custom-scrollbar ${
+            mobileTab === 'CANVAS' ? 'hidden md:flex' : 'flex flex-1 h-full'
+          }`}>
+            {/* Mobile Header for Controls Drawer */}
+            <div className="md:hidden flex items-center justify-between pb-2 border-b border-green-900/80 mb-1 flex-shrink-0">
+              <button
+                onClick={() => setMobileTab('CANVAS')}
+                className="py-2 px-3.5 rounded bg-green-500 text-black font-black text-xs tracking-wider flex items-center gap-2 min-h-[44px] shadow-[0_0_15px_rgba(34,197,94,0.4)] active:scale-95"
+              >
+                ← VOLVER AL LIENZO
+              </button>
+              <div className="flex items-center gap-2 text-[10px] text-green-400 font-mono">
+                <span>{fps} FPS</span>
+                <span>·</span>
+                <span className={faceDetected ? 'text-green-300 font-bold' : 'text-yellow-400'}>
+                  {faceDetected ? 'TRACKING' : 'SIMULADO'}
+                </span>
+              </div>
+            </div>
             {/* Mode Selector */}
             <div className="space-y-1.5">
               <span className="text-[10px] font-bold text-green-600 tracking-wider flex items-center gap-1.5">
@@ -1544,7 +1784,7 @@ export const VigiliaFace: React.FC = () => {
                   <button
                     key={modeKey}
                     onClick={() => setActiveMode(modeKey)}
-                    className={`p-2 rounded text-left border transition-all ${
+                    className={`p-2.5 rounded text-left border transition-all min-h-[48px] active:scale-[0.98] ${
                       activeMode === modeKey
                         ? 'bg-green-950/80 border-green-500 text-white shadow-[0_0_12px_rgba(34,197,94,0.3)]'
                         : 'border-green-950/60 text-green-700 hover:text-green-400 hover:border-green-800'
@@ -1562,21 +1802,21 @@ export const VigiliaFace: React.FC = () => {
               <span className="text-[10px] font-bold text-green-600 tracking-wider flex items-center gap-1.5">
                 <Palette size={11} /> PALETA CROMÁTICA
               </span>
-              <div className="grid grid-cols-2 gap-1.5">
+              <div className="grid grid-cols-2 gap-2">
                 {(Object.keys(COLOR_PALETTES) as PaletteType[]).map((palKey) => {
                   const pal = COLOR_PALETTES[palKey];
                   return (
                     <button
                       key={palKey}
                       onClick={() => setActivePalette(palKey)}
-                      className={`p-1.5 rounded border text-left flex items-center gap-2 transition-all ${
+                      className={`p-2.5 rounded border text-left flex items-center gap-2.5 transition-all min-h-[44px] active:scale-95 ${
                         activePalette === palKey
-                          ? 'border-green-500 bg-green-950/50 text-white'
+                          ? 'border-green-500 bg-green-950/60 text-white shadow-[0_0_10px_rgba(34,197,94,0.25)]'
                           : 'border-neutral-900 text-neutral-500 hover:text-neutral-300'
                       }`}
                     >
-                      <span className="w-2.5 h-2.5 rounded-full" style={{ backgroundColor: pal.primary }}></span>
-                      <span className="text-[9px] font-bold tracking-wider">{pal.name}</span>
+                      <span className="w-3.5 h-3.5 rounded-full flex-shrink-0 shadow-sm" style={{ backgroundColor: pal.primary }}></span>
+                      <span className="text-[10px] font-bold tracking-wider truncate">{pal.name}</span>
                     </button>
                   );
                 })}
@@ -1588,7 +1828,7 @@ export const VigiliaFace: React.FC = () => {
               <span className="text-[10px] font-bold text-green-600 tracking-wider flex items-center gap-1.5">
                 <Camera size={11} /> TRATAMIENTO ÓPTICO (CÁMARA)
               </span>
-              <div className="grid grid-cols-2 gap-1 text-[9px]">
+              <div className="grid grid-cols-2 gap-1.5 text-[9px]">
                 {[
                   { id: 'CYBER_DARK', label: 'CIBER OSCURO' },
                   { id: 'SURVEILLANCE', label: 'CCTV PHOSPHOR' },
@@ -1598,9 +1838,9 @@ export const VigiliaFace: React.FC = () => {
                   <button
                     key={flt.id}
                     onClick={() => setCameraFilter(flt.id as CameraFilterType)}
-                    className={`py-1 px-2 rounded border font-bold text-left transition-all ${
+                    className={`py-2 px-2.5 rounded border font-bold text-left transition-all min-h-[44px] flex items-center active:scale-95 ${
                       cameraFilter === flt.id 
-                        ? 'bg-green-950/70 border-green-500 text-white' 
+                        ? 'bg-green-950/70 border-green-500 text-white shadow-[0_0_8px_rgba(34,197,94,0.2)]' 
                         : 'border-neutral-900 text-neutral-500 hover:text-green-400'
                     }`}
                   >
@@ -1617,42 +1857,46 @@ export const VigiliaFace: React.FC = () => {
               </span>
 
               {/* Sensibilidad */}
-              <div className="space-y-1">
-                <div className="flex justify-between text-[9px] font-bold text-neutral-400">
+              <div className="space-y-1 p-1 bg-black/40 rounded border border-green-950/40">
+                <div className="flex justify-between text-[10px] font-bold text-neutral-300">
                   <span>SENSIBILIDAD GESTUAL</span>
-                  <span className="text-green-400">{sensitivity.toFixed(1)}x</span>
+                  <span className="text-green-400 font-mono">{sensitivity.toFixed(1)}x</span>
                 </div>
-                <input
-                  type="range"
-                  min="0.8"
-                  max="2.5"
-                  step="0.1"
-                  value={sensitivity}
-                  onChange={(e) => setSensitivity(parseFloat(e.target.value))}
-                  className="w-full h-1.5 bg-neutral-900 rounded appearance-none cursor-pointer accent-green-500"
-                />
+                <div className="py-1">
+                  <input
+                    type="range"
+                    min="0.8"
+                    max="2.5"
+                    step="0.1"
+                    value={sensitivity}
+                    onChange={(e) => setSensitivity(parseFloat(e.target.value))}
+                    className="w-full h-2.5 bg-neutral-900 rounded-lg appearance-none cursor-pointer accent-green-500 touch-manipulation"
+                  />
+                </div>
               </div>
 
               {/* Filtro de Suavizado EMA (Anti-Jitter) */}
-              <div className="space-y-1">
-                <div className="flex justify-between text-[9px] font-bold text-neutral-400">
+              <div className="space-y-1 p-1 bg-black/40 rounded border border-green-950/40">
+                <div className="flex justify-between text-[10px] font-bold text-neutral-300">
                   <span className="flex items-center gap-1">
-                    <Zap size={10} className="text-green-400" />
+                    <Zap size={11} className="text-green-400" />
                     SUAVIZADO EMA (ANTI-JITTER)
                   </span>
                   <span className="text-green-400 font-mono">
                     {emaAlpha <= 0.25 ? 'MÁXIMO' : emaAlpha <= 0.55 ? 'EQUILIBRADO' : 'REACTIVO'} (α={emaAlpha.toFixed(2)})
                   </span>
                 </div>
-                <input
-                  type="range"
-                  min="0.15"
-                  max="0.85"
-                  step="0.05"
-                  value={emaAlpha}
-                  onChange={(e) => setEmaAlpha(parseFloat(e.target.value))}
-                  className="w-full h-1.5 bg-neutral-900 rounded appearance-none cursor-pointer accent-green-500"
-                />
+                <div className="py-1">
+                  <input
+                    type="range"
+                    min="0.15"
+                    max="0.85"
+                    step="0.05"
+                    value={emaAlpha}
+                    onChange={(e) => setEmaAlpha(parseFloat(e.target.value))}
+                    className="w-full h-2.5 bg-neutral-900 rounded-lg appearance-none cursor-pointer accent-green-500 touch-manipulation"
+                  />
+                </div>
                 <div className="flex justify-between text-[8px] text-neutral-500 font-mono">
                   <span>← Menos temblor (estable)</span>
                   <span>Más reactivo →</span>
@@ -1660,20 +1904,22 @@ export const VigiliaFace: React.FC = () => {
               </div>
 
               {/* Opacidad Fondo Cámara */}
-              <div className="space-y-1">
-                <div className="flex justify-between text-[9px] font-bold text-neutral-400">
+              <div className="space-y-1 p-1 bg-black/40 rounded border border-green-950/40">
+                <div className="flex justify-between text-[10px] font-bold text-neutral-300">
                   <span>VISIBILIDAD CÁMARA (FONDO)</span>
-                  <span className="text-green-400">{(cameraOpacity * 100).toFixed(0)}%</span>
+                  <span className="text-green-400 font-mono">{(cameraOpacity * 100).toFixed(0)}%</span>
                 </div>
-                <input
-                  type="range"
-                  min="0"
-                  max="0.85"
-                  step="0.05"
-                  value={cameraOpacity}
-                  onChange={(e) => setCameraOpacity(parseFloat(e.target.value))}
-                  className="w-full h-1.5 bg-neutral-900 rounded appearance-none cursor-pointer accent-green-500"
-                />
+                <div className="py-1">
+                  <input
+                    type="range"
+                    min="0"
+                    max="0.85"
+                    step="0.05"
+                    value={cameraOpacity}
+                    onChange={(e) => setCameraOpacity(parseFloat(e.target.value))}
+                    className="w-full h-2.5 bg-neutral-900 rounded-lg appearance-none cursor-pointer accent-green-500 touch-manipulation"
+                  />
+                </div>
               </div>
             </div>
 
@@ -1685,72 +1931,72 @@ export const VigiliaFace: React.FC = () => {
               <div className="grid grid-cols-2 gap-1.5 text-[9px]">
                 <button
                   onClick={() => setShowMesh(!showMesh)}
-                  className={`py-1.5 px-2 rounded border font-bold flex items-center justify-between ${
+                  className={`p-2 rounded border font-bold flex items-center justify-between min-h-[44px] active:scale-95 ${
                     showMesh ? 'bg-green-950/60 border-green-600 text-green-300' : 'border-neutral-900 text-neutral-600'
                   }`}
                 >
                   <span>MALLA FACIAL 3D</span>
-                  <span className="w-1.5 h-1.5 rounded-full bg-current"></span>
+                  <span className="w-2 h-2 rounded-full bg-current"></span>
                 </button>
 
                 <button
                   onClick={() => setTrackEyes(!trackEyes)}
-                  className={`py-1.5 px-2 rounded border font-bold flex items-center justify-between ${
+                  className={`p-2 rounded border font-bold flex items-center justify-between min-h-[44px] active:scale-95 ${
                     trackEyes ? 'bg-green-950/60 border-green-600 text-green-300' : 'border-neutral-900 text-neutral-600'
                   }`}
                 >
                   <span>RETÍCULAS OJOS</span>
-                  <span className="w-1.5 h-1.5 rounded-full bg-current"></span>
+                  <span className="w-2 h-2 rounded-full bg-current"></span>
                 </button>
 
                 <button
                   onClick={() => setTrackBrows(!trackBrows)}
-                  className={`py-1.5 px-2 rounded border font-bold flex items-center justify-between ${
+                  className={`p-2 rounded border font-bold flex items-center justify-between min-h-[44px] active:scale-95 ${
                     trackBrows ? 'bg-green-950/60 border-green-600 text-green-300' : 'border-neutral-900 text-neutral-600'
                   }`}
                 >
                   <span>AURAS CEJAS</span>
-                  <span className="w-1.5 h-1.5 rounded-full bg-current"></span>
+                  <span className="w-2 h-2 rounded-full bg-current"></span>
                 </button>
 
                 <button
                   onClick={() => setTrackMouth(!trackMouth)}
-                  className={`py-1.5 px-2 rounded border font-bold flex items-center justify-between ${
+                  className={`p-2 rounded border font-bold flex items-center justify-between min-h-[44px] active:scale-95 ${
                     trackMouth ? 'bg-green-950/60 border-green-600 text-green-300' : 'border-neutral-900 text-neutral-600'
                   }`}
                 >
                   <span>BOCA / PARTÍCULAS</span>
-                  <span className="w-1.5 h-1.5 rounded-full bg-current"></span>
+                  <span className="w-2 h-2 rounded-full bg-current"></span>
                 </button>
 
                 <button
                   onClick={() => setTrackHead(!trackHead)}
-                  className={`py-1.5 px-2 rounded border font-bold flex items-center justify-between ${
+                  className={`p-2 rounded border font-bold flex items-center justify-between min-h-[44px] active:scale-95 ${
                     trackHead ? 'bg-green-950/60 border-green-600 text-green-300' : 'border-neutral-900 text-neutral-600'
                   }`}
                 >
                   <span>CABEZA / ESPACIO</span>
-                  <span className="w-1.5 h-1.5 rounded-full bg-current"></span>
+                  <span className="w-2 h-2 rounded-full bg-current"></span>
                 </button>
 
                 <button
                   onClick={() => setShowCameraBg(!showCameraBg)}
-                  className={`py-1.5 px-2 rounded border font-bold flex items-center justify-between ${
+                  className={`p-2 rounded border font-bold flex items-center justify-between min-h-[44px] active:scale-95 ${
                     showCameraBg ? 'bg-green-950/60 border-green-600 text-green-300' : 'border-neutral-900 text-neutral-600'
                   }`}
                 >
                   <span>FONDO CÁMARA</span>
-                  <span className="w-1.5 h-1.5 rounded-full bg-current"></span>
+                  <span className="w-2 h-2 rounded-full bg-current"></span>
                 </button>
 
                 <button
                   onClick={() => setShowHUD(!showHUD)}
-                  className={`py-1.5 px-2 rounded border font-bold flex items-center justify-between ${
+                  className={`p-2 rounded border font-bold flex items-center justify-between min-h-[44px] col-span-2 active:scale-95 ${
                     showHUD ? 'bg-green-950/60 border-green-600 text-green-300' : 'border-neutral-900 text-neutral-600'
                   }`}
                 >
-                  <span>VÚMETROS EN LIENZO</span>
-                  <span className="w-1.5 h-1.5 rounded-full bg-current"></span>
+                  <span>VÚMETROS EN LIENZO (HUD)</span>
+                  <span className="w-2 h-2 rounded-full bg-current"></span>
                 </button>
               </div>
             </div>
@@ -1809,35 +2055,35 @@ export const VigiliaFace: React.FC = () => {
               <div className="grid grid-cols-2 gap-2">
                 <button
                   onClick={toggleRecording}
-                  className={`py-2 px-3 rounded text-[10px] font-black tracking-wider flex items-center justify-center gap-1.5 border transition-all ${
+                  className={`py-2.5 px-3 rounded text-[10px] font-black tracking-wider flex items-center justify-center gap-1.5 border transition-all min-h-[44px] active:scale-95 ${
                     isRecording
                       ? 'bg-red-600 text-white border-red-500 animate-pulse'
                       : 'border-green-800 text-green-300 hover:bg-green-950/60'
                   }`}
                 >
-                  <Film size={10} />
+                  <Film size={12} />
                   {isRecording ? `REC ${recordingTime}s` : `GRABAR .${videoFormat.toUpperCase()}`}
                 </button>
 
                 <button
                   onClick={takeSnapshot}
-                  className="py-2 px-3 rounded text-[10px] font-black tracking-wider flex items-center justify-center gap-1.5 border border-green-800 text-green-300 hover:bg-green-950/60 transition-all"
+                  className="py-2.5 px-3 rounded text-[10px] font-black tracking-wider flex items-center justify-center gap-1.5 border border-green-800 text-green-300 hover:bg-green-950/60 transition-all min-h-[44px] active:scale-95"
                 >
-                  <Save size={10} /> FOTO HD
+                  <Save size={12} /> FOTO HD
                 </button>
               </div>
 
-              <div className="flex items-center justify-between text-[9px] bg-black/60 p-1.5 rounded border border-green-950">
+              <div className="flex items-center justify-between text-[9px] bg-black/60 p-2 rounded border border-green-950">
                 <span className="text-neutral-500 font-bold">FORMATO VIDEO:</span>
-                <div className="flex gap-1">
+                <div className="flex gap-1.5">
                   {(['mp4', 'mov', 'webm'] as const).map(fmt => (
                     <button
                       key={fmt}
                       onClick={() => setVideoFormat(fmt)}
-                      className={`px-1.5 py-0.5 rounded text-[8px] font-black uppercase transition-all ${
+                      className={`px-2.5 py-1 rounded text-[9px] font-black uppercase transition-all min-h-[32px] flex items-center justify-center active:scale-95 ${
                         videoFormat === fmt 
                           ? 'bg-green-500 text-black shadow-[0_0_8px_rgba(34,197,94,0.5)]' 
-                          : 'bg-neutral-900 text-neutral-500 hover:text-green-300'
+                          : 'bg-neutral-900 text-neutral-400 hover:text-green-300'
                       }`}
                     >
                       .{fmt}

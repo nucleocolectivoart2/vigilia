@@ -182,15 +182,30 @@ export const VigiliaAuth: React.FC<VigiliaAuthProps> = ({ onAccessGranted }) => 
   };
 
   const handleEnroll = () => {
-      if (!videoRef.current) return;
       playSound('click');
       const canvas = document.createElement('canvas');
       canvas.width = 100; canvas.height = 100;
       const ctx = canvas.getContext('2d');
       if (ctx) {
-          ctx.translate(100, 0);
-          ctx.scale(-1, 1);
-          ctx.drawImage(videoRef.current, 0, 0, 100, 100);
+          if (videoRef.current && videoRef.current.videoWidth > 0) {
+              ctx.translate(100, 0);
+              ctx.scale(-1, 1);
+              ctx.drawImage(videoRef.current, 0, 0, 100, 100);
+          } else {
+              // Procedural Cyber Avatar for simulated devices
+              ctx.fillStyle = '#030805';
+              ctx.fillRect(0, 0, 100, 100);
+              ctx.strokeStyle = '#10b981';
+              ctx.lineWidth = 2;
+              ctx.strokeRect(10, 10, 80, 80);
+              ctx.fillStyle = '#10b981';
+              ctx.beginPath();
+              ctx.arc(50, 42, 18, 0, Math.PI * 2);
+              ctx.fill();
+              ctx.beginPath();
+              ctx.arc(50, 86, 26, Math.PI, 0);
+              ctx.fill();
+          }
       }
       setTempImage(canvas.toDataURL());
       setShowNameModal(true);
@@ -199,7 +214,7 @@ export const VigiliaAuth: React.FC<VigiliaAuthProps> = ({ onAccessGranted }) => 
 
   const saveUser = () => {
       if (!nameInputRef.current) return;
-      const name = nameInputRef.current.value.toUpperCase() || "OPERATIVO_X";
+      const name = nameInputRef.current.value.trim().toUpperCase() || "OPERATIVO_X";
       setUser({
           name,
           id: `ID_${Math.floor(Math.random()*9999)}`,
@@ -272,25 +287,52 @@ export const VigiliaAuth: React.FC<VigiliaAuthProps> = ({ onAccessGranted }) => 
                     </div>
                     
                     {introStep === introTexts.length - 1 && displayedText.length === introTexts[introStep].length && (
-                        <div className="mt-16 flex justify-center animate-pulse">
+                        <div className="mt-12 flex justify-center animate-pulse">
                             <button 
                             onClick={() => { playSound('click'); setView('BOOT'); }} 
-                            className="px-12 py-5 bg-transparent hover:bg-green-500 hover:text-black border-2 border-green-500 transition-all font-black tracking-[0.4em] text-sm md:text-base shadow-[0_0_30px_rgba(34,197,94,0.3)]"
+                            className="px-8 sm:px-12 py-4 sm:py-5 bg-green-500 text-black border-2 border-green-400 font-black tracking-[0.2em] sm:tracking-[0.4em] text-sm md:text-base shadow-[0_0_30px_rgba(34,197,94,0.4)] min-h-[48px] rounded-sm active:scale-95"
                             >
                                 INICIAR PROTOCOLO
                             </button>
                         </div>
                     )}
+
+                    {/* Quick Skip for mobile and returning operators */}
+                    <div className="mt-8 flex justify-center">
+                        <button
+                            onClick={() => { playSound('click'); setView('BOOT'); }}
+                            className="px-4 py-2 text-[10px] tracking-widest text-green-500/70 hover:text-green-300 border border-green-900/60 hover:border-green-600 rounded bg-black/40 min-h-[40px] flex items-center gap-1.5 transition-all"
+                        >
+                            <span>SALTAR INTRODUCCIÓN ➔</span>
+                        </button>
+                    </div>
                     
-                    <div className="mt-24 opacity-60 flex justify-center gap-3">
+                    <div className="mt-12 opacity-60 flex justify-center gap-2 sm:gap-3">
                         {introTexts.map((_, i) => (
-                            <div key={i} className={`h-1.5 transition-all duration-500 ${i === introStep ? 'w-12 bg-green-400 shadow-[0_0_15px_rgba(34,197,94,0.9)]' : i < introStep ? 'w-4 bg-green-700' : 'w-4 bg-green-950'}`}></div>
+                            <div key={i} className={`h-1.5 transition-all duration-500 ${i === introStep ? 'w-8 sm:w-12 bg-green-400 shadow-[0_0_15px_rgba(34,197,94,0.9)]' : i < introStep ? 'w-3 sm:w-4 bg-green-700' : 'w-3 sm:w-4 bg-green-950'}`}></div>
                         ))}
                     </div>
                 </div>
             </div>
         ) : (
-            <div className="relative flex-1 p-4 grid grid-cols-1 md:grid-cols-12 gap-4 overflow-y-auto md:overflow-hidden">
+            <div className="relative flex-1 p-3 sm:p-4 grid grid-cols-1 md:grid-cols-12 gap-3 sm:gap-4 overflow-y-auto md:overflow-hidden pb-16 md:pb-4">
+                {/* Mobile Active Subject Banner */}
+                <div className="md:hidden col-span-1 glass-panel p-2.5 rounded border border-green-900/60 flex items-center justify-between">
+                    <div className="flex items-center gap-2">
+                        <div className="w-9 h-9 bg-black border border-green-700 flex items-center justify-center overflow-hidden rounded">
+                            {user && user.image ? <img src={user.image} className="w-full h-full object-cover grayscale" alt="User" /> : <span className="text-[8px] opacity-50">N/A</span>}
+                        </div>
+                        <div>
+                            <div className="text-[11px] font-bold text-white">{user ? user.name : 'OPERADOR NO REGISTRADO'}</div>
+                            <div className="text-[8px] opacity-60 font-mono">{user ? user.id : 'PULSA REGISTRAR'}</div>
+                        </div>
+                    </div>
+                    {user && (
+                        <span className="text-[9px] px-2 py-0.5 bg-green-950 border border-green-500 text-green-300 font-bold rounded">
+                            LISTO
+                        </span>
+                    )}
+                </div>
                 
                 <div className="md:col-span-3 glass-panel p-4 flex flex-col gap-4 hidden md:flex">
                     <div className="space-y-2">

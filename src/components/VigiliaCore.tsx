@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react';
-import { Camera, Activity, Eye, Mic, Settings, Play, Square, Terminal, Network, RefreshCw, Volume2, VolumeX, Save, FileText, Grid, Zap, Aperture, Target, Crosshair, Sparkles, MessageSquare, Share2, Radio, Trash2, Sliders, Music, MicOff, Monitor, EyeOff, Lock, Type, Moon, Sun, Disc, Shuffle, Cpu, PenTool, BarChart3, ShieldCheck, UserPlus, Fingerprint, X, HelpCircle, Film } from 'lucide-react';
+import { Camera, Activity, Eye, Mic, Settings, Play, Square, Terminal, Network, RefreshCw, Volume2, VolumeX, Save, FileText, Grid, Zap, Aperture, Target, Crosshair, Sparkles, MessageSquare, Share2, Radio, Trash2, Sliders, Music, MicOff, Monitor, EyeOff, Lock, Type, Moon, Sun, Disc, Shuffle, Cpu, PenTool, BarChart3, ShieldCheck, UserPlus, Fingerprint, X, HelpCircle, Film, FlipHorizontal, SlidersHorizontal } from 'lucide-react';
 
 interface VigiliaCoreProps {
   userName: string;
@@ -161,6 +161,8 @@ export const VigiliaCore: React.FC<VigiliaCoreProps> = ({ userName }) => {
 
   const [cameraError, setCameraError] = useState<string | null>(null);
   const [galleryMode, setGalleryMode] = useState(false);
+  const [mobileTab, setMobileTab] = useState<'CANVAS' | 'CONTROLS'>('CANVAS');
+  const [cameraFacing, setCameraFacing] = useState<'user' | 'environment'>('user');
   
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const recordedChunksRef = useRef<Blob[]>([]);
@@ -625,11 +627,15 @@ export const VigiliaCore: React.FC<VigiliaCoreProps> = ({ userName }) => {
         }
     } else if (!isStutter && video) {
         const pixelationFactor = chaosLevel > 180 ? 4 : 1; 
-        ctx.save();
-        ctx.translate(canvas.width / pixelationFactor, 0);
-        ctx.scale(-1, 1);
-        ctx.drawImage(video, 0, 0, canvas.width / pixelationFactor, canvas.height / pixelationFactor);
-        ctx.restore();
+        if (cameraFacing === 'user') {
+            ctx.save();
+            ctx.translate(canvas.width / pixelationFactor, 0);
+            ctx.scale(-1, 1);
+            ctx.drawImage(video, 0, 0, canvas.width / pixelationFactor, canvas.height / pixelationFactor);
+            ctx.restore();
+        } else {
+            ctx.drawImage(video, 0, 0, canvas.width / pixelationFactor, canvas.height / pixelationFactor);
+        }
         if (pixelationFactor > 1) {
             ctx.imageSmoothingEnabled = false;
             ctx.drawImage(canvas, 0, 0, canvas.width / pixelationFactor, canvas.height / pixelationFactor, 0, 0, canvas.width, canvas.height);
@@ -756,7 +762,8 @@ export const VigiliaCore: React.FC<VigiliaCoreProps> = ({ userName }) => {
         const finalX = cameraPanRef.current.x + jitterX;
         const finalY = cameraPanRef.current.y + jitterY;
 
-        videoRef.current.style.transform = `translate(${finalX}%, ${finalY}%) scaleX(${-targetScale}) scaleY(${targetScale})`;
+        const scaleXVal = cameraFacing === 'user' ? -targetScale : targetScale;
+        videoRef.current.style.transform = `translate(${finalX}%, ${finalY}%) scaleX(${scaleXVal}) scaleY(${targetScale})`;
         
         const baseFilterStr = CAMERA_FILTERS[currentFilter].filter === 'none' ? '' : CAMERA_FILTERS[currentFilter].filter;
         const dynamicSat = 100 + (bandsRef.current.treble / 3); 
@@ -1027,10 +1034,15 @@ export const VigiliaCore: React.FC<VigiliaCoreProps> = ({ userName }) => {
     addLog("SENSOR GENERATIVO SIMULADO ONLINE", true);
   };
 
-  const startCamera = async () => {
+  const startCamera = async (facing: 'user' | 'environment' = cameraFacing) => {
     setIsScanning(true);
     setCameraError(null);
-    addLog("CONECTANDO SENSOR ÓPTICO...", false);
+    addLog(`CONECTANDO SENSOR ÓPTICO (${facing.toUpperCase()})...`, false);
+
+    if (videoRef.current?.srcObject) {
+      (videoRef.current.srcObject as MediaStream).getTracks().forEach(track => track.stop());
+      videoRef.current.srcObject = null;
+    }
 
     if (typeof navigator === 'undefined' || !navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
         setIsScanning(false);
@@ -1045,13 +1057,15 @@ export const VigiliaCore: React.FC<VigiliaCoreProps> = ({ userName }) => {
         try {
             stream = await navigator.mediaDevices.getUserMedia({
                 video: {
-                    facingMode: "user",
+                    facingMode: { ideal: facing },
                     width: { ideal: 1280 },
                     height: { ideal: 720 }
                 }
             });
         } catch {
-            stream = await navigator.mediaDevices.getUserMedia({ video: true });
+            stream = await navigator.mediaDevices.getUserMedia({
+                video: { facingMode: facing }
+            });
         }
 
         if (videoRef.current) {
@@ -1065,12 +1079,63 @@ export const VigiliaCore: React.FC<VigiliaCoreProps> = ({ userName }) => {
         setIsSystemActive(true);
         if (requestRef.current) cancelAnimationFrame(requestRef.current);
         requestRef.current = requestAnimationFrame(processFrame);
-        addLog("SISTEMA ONLINE - ÓPTICA ACTIVA.", false);
+        addLog(`SISTEMA ONLINE - ÓPTICA ACTIVA (${facing.toUpperCase()}).`, false);
     } catch (err: any) {
         console.warn("Camera init error:", err);
         setIsScanning(false);
         setCameraError("No se pudo iniciar la cámara en este dispositivo. Puedes usar el modo simulado generativo.");
         addLog("ERROR CÁMARA (PERMISOS O HARDWARE)", true);
+    }
+  };
+
+  const flipCamera = async () => {
+    const nextFacing = cameraFacing === 'user' ? 'environment' : 'user';
+    setCameraFacing(nextFacing);
+    if (isSystemActive && !isSimulated) {
+      await startCamera(nextFacing);
+    }
+  };
+
+  const handleCanvasInteraction = (clientX: number, clientY: number) => {
+    const canvas = displayCanvasRef.current;
+    if (!canvas) return;
+    const rect = canvas.getBoundingClientRect();
+    const rawX = Math.max(0, Math.min(1, (clientX - rect.left) / rect.width));
+    const rawY = Math.max(0, Math.min(1, (clientY - rect.top) / rect.height));
+    const touchX = rawX * canvas.width;
+    const touchY = rawY * canvas.height;
+
+    // Inject kinetic disturbance into motion score
+    motionScoreRef.current = Math.min(100, motionScoreRef.current + 25);
+    centroidRef.current = { x: rawX, y: rawY };
+
+    // Spawn interactive particles
+    for (let i = 0; i < 3; i++) {
+      const hue = rawX * 120 + 80;
+      particlesRef.current.push(new Particle(touchX, touchY, hue, false, 0.9));
+    }
+
+    // Disturb mesh for BREATH mode
+    const meshX = Math.floor(rawX * MESH_COLS);
+    const meshY = Math.floor(rawY * MESH_ROWS);
+    const idx = meshY * MESH_COLS + meshX;
+    if (meshRef.current[idx]) {
+      meshRef.current[idx].targetZ = 90;
+    }
+
+    if (audioContextRef.current && audioContextRef.current.state === 'suspended') {
+      audioContextRef.current.resume().catch(() => {});
+    }
+  };
+
+  const handleCanvasTouch = (e: React.TouchEvent<HTMLDivElement | HTMLCanvasElement>) => {
+    const touch = e.touches[0];
+    if (touch) handleCanvasInteraction(touch.clientX, touch.clientY);
+  };
+
+  const handleCanvasPointer = (e: React.PointerEvent<HTMLDivElement | HTMLCanvasElement>) => {
+    if (e.buttons > 0 || e.pointerType === 'touch') {
+      handleCanvasInteraction(e.clientX, e.clientY);
     }
   };
 
@@ -1158,33 +1223,58 @@ export const VigiliaCore: React.FC<VigiliaCoreProps> = ({ userName }) => {
         </div>
       )}
       
-      <div className={`flex-1 flex flex-col gap-2 relative border border-green-900/50 bg-neutral-900/20 p-2 min-h-[50vh] md:min-h-0 ${galleryMode ? 'fixed inset-0 z-50 bg-black p-0 border-0' : ''}`}>
+      <div className={`flex-1 flex flex-col gap-2 relative border border-green-900/50 bg-neutral-900/20 p-2 min-h-[50vh] md:min-h-0 ${galleryMode ? 'fixed inset-0 z-50 bg-black p-0 border-0' : mobileTab === 'CONTROLS' ? 'hidden md:flex' : 'flex'}`}>
         
         {!galleryMode && (
           <div className="flex justify-between items-center pb-2 border-b border-green-900/50">
             <div>
-              <h1 className="text-xl font-extrabold tracking-[0.2em] text-green-400">VIGILIA<span className="text-green-800">EXP</span></h1>
-              <p className="text-[10px] text-green-600 font-medium">v2026.33 // {activeMode} {isSimulated ? '(MODO SIMULADO)' : ''}</p>
+              <h1 className="text-lg sm:text-xl font-extrabold tracking-[0.2em] text-green-400">VIGILIA<span className="text-green-800">EXP</span></h1>
+              <p className="text-[10px] text-green-600 font-medium truncate">KERNEL // {activeMode} {isSimulated ? '(SIMULADO)' : ''}</p>
             </div>
-            <div className="flex items-center gap-3 text-xs font-bold">
+            <div className="flex items-center gap-1.5 sm:gap-2.5 text-xs font-bold">
+              {/* Flip camera front/back */}
+              <button
+                onClick={flipCamera}
+                className="p-1 sm:px-2 sm:py-1 text-[10px] font-bold text-green-400 border border-green-800 hover:border-green-400 hover:bg-green-950/60 rounded-sm flex items-center gap-1 transition-colors min-h-[36px] min-w-[36px] justify-center"
+                title="Voltear Cámara"
+              >
+                <FlipHorizontal size={13} />
+                <span className="hidden md:inline">{cameraFacing === 'user' ? 'FRONTAL' : 'TRASERA'}</span>
+              </button>
+
               <button 
                 onClick={() => { setTutorialStep(0); setShowTutorial(true); }}
-                className="px-2 py-0.5 text-[10px] font-bold text-green-400 border border-green-800 hover:border-green-400 hover:bg-green-950/60 rounded-sm flex items-center gap-1 transition-colors"
+                className="px-2 py-1 text-[10px] font-bold text-green-400 border border-green-800 hover:border-green-400 hover:bg-green-950/60 rounded-sm flex items-center gap-1 transition-colors min-h-[36px]"
                 title="Abrir Tutorial"
               >
-                <HelpCircle size={11} /> TUTORIAL
+                <HelpCircle size={12} /> <span className="hidden sm:inline">TUTORIAL</span>
               </button>
-              <span className={isRecording ? "text-red-500 animate-pulse" : "text-gray-600"}>
+              <span className={`text-[10px] font-mono ${isRecording ? "text-red-500 animate-pulse" : "text-gray-500"}`}>
                   {isRecording ? `REC ${recordingTime}s` : "ESPERA"}
               </span>
-              <div className={`px-2 py-0.5 rounded text-[10px] ${isSystemActive ? 'bg-green-900 text-green-100' : 'bg-red-900/30 text-red-500'}`}>
-                  {isSystemActive ? (isSimulated ? 'SIMULADO' : 'EN VIVO') : 'OFF'}
+              <div className={`px-2 py-1 rounded text-[10px] font-mono min-h-[32px] flex items-center ${isSystemActive ? 'bg-green-900 text-green-100' : 'bg-red-900/30 text-red-500'}`}>
+                  {isSystemActive ? (isSimulated ? 'SIM' : 'ON') : 'OFF'}
               </div>
+
+              {/* Mobile Toggle to Controls */}
+              <button
+                onClick={() => setMobileTab('CONTROLS')}
+                className="md:hidden px-2.5 py-1 rounded bg-green-950 border border-green-500 text-green-300 text-[10px] font-bold flex items-center gap-1 min-h-[36px]"
+              >
+                <SlidersHorizontal size={13} />
+                <span>AJUSTES</span>
+              </button>
             </div>
           </div>
         )}
 
-        <div className={`relative bg-black rounded-sm flex-1 overflow-hidden flex items-center justify-center group ${!galleryMode ? 'min-h-[400px] border border-green-900/30' : 'w-full h-full'}`}>
+        <div 
+          className={`relative bg-black rounded-sm flex-1 overflow-hidden flex items-center justify-center group touch-none cursor-crosshair ${!galleryMode ? 'min-h-[350px] border border-green-900/30' : 'w-full h-full'}`}
+          onTouchStart={handleCanvasTouch}
+          onTouchMove={handleCanvasTouch}
+          onPointerDown={handleCanvasPointer}
+          onPointerMove={handleCanvasPointer}
+        >
           {!isSystemActive && !isScanning && (
             <div className="text-center text-green-900/80 p-4 max-w-sm flex flex-col items-center z-20">
               <Aperture className="w-16 h-16 mx-auto mb-3 opacity-30 text-green-500" />
@@ -1198,14 +1288,14 @@ export const VigiliaCore: React.FC<VigiliaCoreProps> = ({ userName }) => {
 
               <div className="flex flex-col gap-2 w-full mt-1">
                 <button
-                  onClick={startCamera}
-                  className="py-3 px-6 bg-green-900 hover:bg-green-800 text-white font-extrabold text-xs tracking-widest transition-all rounded-sm border border-green-500 shadow-[0_0_15px_rgba(34,197,94,0.3)]"
+                  onClick={() => startCamera(cameraFacing)}
+                  className="py-3 px-6 bg-green-900 hover:bg-green-800 text-white font-extrabold text-xs tracking-widest transition-all rounded-sm border border-green-500 shadow-[0_0_15px_rgba(34,197,94,0.3)] min-h-[44px]"
                 >
                   INICIAR CÁMARA
                 </button>
                 <button
                   onClick={startSimulatedMode}
-                  className="py-2 px-4 bg-transparent hover:bg-green-950/40 text-green-400 font-semibold text-[10px] tracking-wider transition-all rounded-sm border border-green-800"
+                  className="py-2.5 px-4 bg-transparent hover:bg-green-950/40 text-green-400 font-semibold text-[10px] tracking-wider transition-all rounded-sm border border-green-800 min-h-[44px]"
                 >
                   SENSOR SIMULADO (SIN CÁMARA)
                 </button>
@@ -1224,7 +1314,7 @@ export const VigiliaCore: React.FC<VigiliaCoreProps> = ({ userName }) => {
           
           <video 
             ref={videoRef} 
-            className={`absolute inset-0 w-full h-full object-cover grayscale transition-all duration-300 scale-x-[-1] ${glitchActive ? 'translate-x-1' : ''}`} 
+            className={`absolute inset-0 w-full h-full object-cover grayscale transition-all duration-300 ${cameraFacing === 'user' ? 'scale-x-[-1]' : 'scale-x-1'} ${glitchActive ? 'translate-x-1' : ''}`} 
             muted 
             playsInline 
             autoPlay
@@ -1234,20 +1324,20 @@ export const VigiliaCore: React.FC<VigiliaCoreProps> = ({ userName }) => {
           <canvas ref={recordingCanvasRef} className="hidden" />
 
           {isSystemActive && (
-              <div className="absolute inset-0 pointer-events-none p-4 flex flex-col justify-between">
+              <div className="absolute inset-0 pointer-events-none p-3 sm:p-4 flex flex-col justify-between">
                   {!galleryMode && (
                     <div className="flex justify-between text-[10px] text-green-500/50 font-medium">
-                        <span>CAM-FEED-01</span>
+                        <span>SENSOR: {cameraFacing.toUpperCase()}</span>
                         <span className={uiAudioScore > 10 ? 'text-green-300 font-bold' : ''}>AUDIO: {uiAudioScore.toFixed(0)}</span>
                     </div>
                   )}
                   
                   {!galleryMode && (
-                    <div className="absolute bottom-4 right-4 text-right">
+                    <div className="absolute bottom-16 sm:bottom-4 right-4 text-right">
                         <div className="flex flex-col items-end">
                              <div className="flex items-center gap-1 mb-1">
                                 <Cpu size={10} className="text-green-500" />
-                                <span className="text-[9px] text-green-400 font-mono">CPU: {Math.floor(10 + Math.random()*5)}%</span>
+                                <span className="text-[9px] text-green-400 font-mono">MOTION: {uiMotionScore.toFixed(0)}%</span>
                              </div>
                              <p className="text-xs font-bold text-green-400">{activeZone !== null ? `ZONA ${ZONES[activeZone].label}` : ''}</p>
                         </div>
@@ -1260,40 +1350,106 @@ export const VigiliaCore: React.FC<VigiliaCoreProps> = ({ userName }) => {
               </div>
           )}
 
+          {/* Mobile Floating Quick Bar (tactile & ergonomic for phones) */}
+          {isSystemActive && !galleryMode && (
+            <div className="md:hidden absolute bottom-3 left-3 right-3 z-30 flex items-center justify-between gap-1.5 p-1.5 bg-black/85 backdrop-blur-md border border-green-900/80 rounded-xl shadow-lg">
+              <button
+                onClick={flipCamera}
+                className="p-2.5 rounded bg-green-950/70 border border-green-800 text-green-300 min-h-[44px] min-w-[44px] flex items-center justify-center active:scale-95"
+                title="Voltear Cámara"
+              >
+                <FlipHorizontal size={18} />
+              </button>
+
+              <button
+                onClick={toggleMic}
+                className={`p-2.5 rounded border min-h-[44px] min-w-[44px] flex items-center justify-center active:scale-95 ${
+                  micEnabled ? 'bg-green-600 text-black border-green-400 font-bold' : 'bg-black/60 border-neutral-800 text-neutral-400'
+                }`}
+                title="Micrófono Reactivo"
+              >
+                {micEnabled ? <Mic size={18} /> : <MicOff size={18} />}
+              </button>
+
+              <button
+                onClick={togglePoetic}
+                className={`flex-1 py-2 px-2.5 rounded border text-[10px] font-bold tracking-wider flex items-center justify-center gap-1.5 min-h-[44px] truncate active:scale-95 ${
+                  autoPoetic ? 'bg-purple-900/60 border-purple-500 text-purple-200' : 'bg-green-950/70 border-green-800 text-green-400'
+                }`}
+                title="Poética Kinética"
+              >
+                <PenTool size={13} className="flex-shrink-0" />
+                <span className="truncate">POÉTICA {autoPoetic ? 'ON' : 'OFF'}</span>
+              </button>
+
+              <button
+                onClick={takeSnapshot}
+                className="p-2.5 rounded bg-green-950/70 border border-green-800 text-green-300 min-h-[44px] min-w-[44px] flex items-center justify-center active:scale-95"
+                title="Capturar Foto HD"
+              >
+                <Save size={18} />
+              </button>
+
+              <button
+                onClick={() => setMobileTab('CONTROLS')}
+                className="py-2 px-3 rounded bg-green-500 text-black font-black text-[11px] tracking-wider flex items-center gap-1 min-h-[44px] shadow-[0_0_12px_rgba(34,197,94,0.4)] active:scale-95"
+              >
+                <SlidersHorizontal size={14} />
+                <span>AJUSTES</span>
+              </button>
+            </div>
+          )}
+
           <button 
             onClick={() => setGalleryMode(!galleryMode)}
-            className={`absolute top-4 right-4 z-50 p-2 rounded-full transition-all ${galleryMode ? 'bg-white/10 text-white hover:bg-white/20' : 'bg-transparent text-green-800 hover:text-green-400'}`}
+            className={`absolute top-4 right-4 z-50 p-2.5 rounded-full transition-all min-h-[40px] min-w-[40px] flex items-center justify-center ${galleryMode ? 'bg-white/10 text-white hover:bg-white/20' : 'bg-transparent text-green-800 hover:text-green-400'}`}
+            title="Alternar Modo Galería"
           >
-              {galleryMode ? <EyeOff size={16}/> : <Monitor size={16}/>}
+              {galleryMode ? <EyeOff size={18}/> : <Monitor size={18}/>}
           </button>
         </div>
       </div>
 
       {!galleryMode && (
-      <div className="w-full md:w-80 flex flex-col gap-2 bg-neutral-900/20 md:border-l border-green-900/50 p-2 md:overflow-y-auto custom-scrollbar">
+      <div className={`w-full md:w-80 flex flex-col gap-2 bg-neutral-900/20 md:border-l border-green-900/50 p-2 md:overflow-y-auto custom-scrollbar ${
+        mobileTab === 'CANVAS' ? 'hidden md:flex' : 'flex flex-1 h-full'
+      }`}>
+        {/* Mobile Header for Controls Drawer */}
+        <div className="md:hidden flex items-center justify-between pb-2 border-b border-green-900/80 mb-1 flex-shrink-0">
+          <button
+            onClick={() => setMobileTab('CANVAS')}
+            className="py-2.5 px-4 rounded bg-green-500 text-black font-black text-xs tracking-wider flex items-center gap-2 min-h-[44px] shadow-[0_0_15px_rgba(34,197,94,0.4)] active:scale-95"
+          >
+            ← VOLVER AL LIENZO KERNEL
+          </button>
+          <span className="text-[10px] font-bold text-green-400 font-mono">
+            {isSystemActive ? 'ONLINE' : 'STANDBY'}
+          </span>
+        </div>
+
         <div className="grid grid-cols-2 gap-2 mb-2">
             {!isSystemActive ? (
-                <button onClick={startCamera} disabled={isScanning} className="col-span-2 py-4 bg-green-900 hover:bg-green-800 text-white font-extrabold text-xs tracking-widest transition-all rounded-sm">
+                <button onClick={() => startCamera(cameraFacing)} disabled={isScanning} className="col-span-2 py-3.5 bg-green-900 hover:bg-green-800 text-white font-extrabold text-xs tracking-widest transition-all rounded-sm min-h-[48px] active:scale-[0.98]">
                     {isScanning ? 'INICIANDO...' : 'ENCENDER'}
                 </button>
             ) : (
-                <button onClick={stopSystem} className="col-span-2 py-4 bg-red-900/20 hover:bg-red-900/40 text-red-500 border border-red-900/50 font-extrabold text-xs tracking-widest transition-all rounded-sm">
+                <button onClick={stopSystem} className="col-span-2 py-3.5 bg-red-900/20 hover:bg-red-900/40 text-red-500 border border-red-900/50 font-extrabold text-xs tracking-widest transition-all rounded-sm min-h-[48px] active:scale-[0.98]">
                     {isRecording ? 'FINALIZAR' : 'APAGAR'}
                 </button>
             )}
             
-            <button onClick={toggleRecording} disabled={!isSystemActive} className={`py-2 text-[10px] border rounded-sm font-semibold ${isRecording ? 'bg-red-600 text-white border-red-600' : 'border-neutral-700 text-neutral-400 hover:border-white'}`}>
+            <button onClick={toggleRecording} disabled={!isSystemActive} className={`py-2.5 px-2 text-[10px] border rounded-sm font-semibold min-h-[44px] flex items-center justify-center active:scale-95 ${isRecording ? 'bg-red-600 text-white border-red-600' : 'border-neutral-700 text-neutral-400 hover:border-white'}`}>
                 {isRecording ? 'STOP REC' : `GRABAR .${videoFormat.toUpperCase()}`}
             </button>
-            <button onClick={takeSnapshot} disabled={!isSystemActive} className="py-2 text-[10px] border border-neutral-700 text-neutral-400 hover:text-white hover:border-white transition-colors flex items-center justify-center gap-1 rounded-sm font-semibold">
-                <Save size={10} /> FOTO HD
+            <button onClick={takeSnapshot} disabled={!isSystemActive} className="py-2.5 px-2 text-[10px] border border-neutral-700 text-neutral-400 hover:text-white hover:border-white transition-colors flex items-center justify-center gap-1 rounded-sm font-semibold min-h-[44px] active:scale-95">
+                <Save size={12} /> FOTO HD
             </button>
 
-            <div className="col-span-2 flex items-center justify-between px-2 py-1 bg-black/60 border border-green-950 rounded-sm">
+            <div className="col-span-2 flex items-center justify-between px-2.5 py-1.5 bg-black/60 border border-green-950 rounded-sm">
                 <span className="text-[9px] font-bold text-green-600 flex items-center gap-1">
-                    <Film size={10} /> FORMATO VIDEO:
+                    <Film size={11} /> FORMATO VIDEO:
                 </span>
-                <div className="flex gap-1">
+                <div className="flex gap-1.5">
                     {(['mp4', 'mov', 'webm'] as const).map(fmt => (
                         <button
                             key={fmt}
@@ -1301,7 +1457,7 @@ export const VigiliaCore: React.FC<VigiliaCoreProps> = ({ userName }) => {
                                 setVideoFormat(fmt);
                                 addLog(`FORMATO VIDEO: .${fmt.toUpperCase()}`, false);
                             }}
-                            className={`px-2 py-0.5 rounded text-[8px] font-black uppercase transition-all ${
+                            className={`px-2.5 py-1 rounded text-[9px] font-black uppercase transition-all min-h-[32px] flex items-center justify-center active:scale-95 ${
                                 videoFormat === fmt
                                     ? 'bg-green-500 text-black shadow-[0_0_10px_rgba(34,197,94,0.6)]'
                                     : 'bg-neutral-900/80 text-neutral-400 hover:text-green-300'
@@ -1316,9 +1472,9 @@ export const VigiliaCore: React.FC<VigiliaCoreProps> = ({ userName }) => {
             <button 
                 onClick={togglePoetic} 
                 disabled={!isSystemActive} 
-                className={`col-span-2 py-2 text-[10px] border rounded-sm transition-colors flex items-center justify-center gap-2 font-bold ${autoPoetic ? 'bg-purple-900/50 border-purple-500 text-white animate-pulse' : 'bg-purple-900/10 border-purple-500/50 text-purple-300 hover:bg-purple-900/20'}`}
+                className={`col-span-2 py-3 px-3 text-[10px] border rounded-sm transition-colors flex items-center justify-center gap-2 font-bold min-h-[44px] active:scale-[0.98] ${autoPoetic ? 'bg-purple-900/50 border-purple-500 text-white animate-pulse' : 'bg-purple-900/10 border-purple-500/50 text-purple-300 hover:bg-purple-900/20'}`}
             >
-                <PenTool size={12} /> {autoPoetic ? 'POÉTICA KINÉTICA: ACTIVA' : 'ACTIVAR POÉTICA KINÉTICA'}
+                <PenTool size={13} /> {autoPoetic ? 'POÉTICA KINÉTICA: ACTIVA' : 'ACTIVAR POÉTICA KINÉTICA'}
             </button>
         </div>
 
@@ -1327,17 +1483,17 @@ export const VigiliaCore: React.FC<VigiliaCoreProps> = ({ userName }) => {
                 <h3 className="text-[10px] text-green-600 uppercase tracking-wider font-bold">Óptica del Sensor</h3>
                 <button 
                     onClick={() => setAutoMode(!autoMode)}
-                    className={`text-[9px] flex items-center gap-1 px-2 py-0.5 rounded-sm transition-colors font-semibold ${autoMode ? 'bg-yellow-900/50 text-yellow-400 border border-yellow-600' : 'text-green-700 hover:text-green-400 border border-transparent'}`}
+                    className={`text-[9px] flex items-center gap-1 px-2.5 py-1 rounded-sm transition-colors font-semibold min-h-[32px] ${autoMode ? 'bg-yellow-900/50 text-yellow-400 border border-yellow-600' : 'text-green-700 hover:text-green-400 border border-transparent'}`}
                 >
                     <Shuffle size={10}/> AUTO PILOT
                 </button>
             </div>
-            <div className="grid grid-cols-4 gap-1">
+            <div className="grid grid-cols-4 gap-1.5">
                 {Object.values(CAMERA_FILTERS).map(filter => (
                     <button 
                         key={filter.id} 
                         onClick={() => setActiveFilter(filter.id)}
-                        className={`flex flex-col items-center justify-center p-1 rounded-sm transition-all ${
+                        className={`flex flex-col items-center justify-center p-2 rounded-sm transition-all min-h-[44px] active:scale-95 ${
                             activeFilter === filter.id 
                             ? 'bg-green-900/50 text-green-300 border border-green-600' 
                             : 'bg-transparent text-green-900 hover:text-green-500 border border-transparent'
@@ -1345,7 +1501,7 @@ export const VigiliaCore: React.FC<VigiliaCoreProps> = ({ userName }) => {
                         title={filter.label}
                     >
                         {filter.icon}
-                        <span className="text-[7px] mt-1 font-medium">{filter.label}</span>
+                        <span className="text-[8px] mt-1 font-medium truncate max-w-full">{filter.label}</span>
                     </button>
                 ))}
             </div>
@@ -1360,9 +1516,9 @@ export const VigiliaCore: React.FC<VigiliaCoreProps> = ({ userName }) => {
                  <div className="absolute bottom-1 right-1 flex gap-2">
                      <button 
                         onClick={toggleMic}
-                        className={`px-2 py-0.5 text-[8px] border rounded-sm font-semibold transition-all ${micEnabled ? 'border-green-500 bg-green-900/30 text-green-400' : 'border-neutral-700 text-neutral-600'}`}
+                        className={`px-2.5 py-1 text-[9px] border rounded-sm font-semibold transition-all min-h-[32px] flex items-center active:scale-95 ${micEnabled ? 'border-green-500 bg-green-900/30 text-green-400' : 'border-neutral-700 text-neutral-600'}`}
                      >
-                         MICRÓFONO {micEnabled ? 'ON' : 'OFF'}
+                         MIC {micEnabled ? 'ON' : 'OFF'}
                      </button>
                  </div>
              </div>
@@ -1375,16 +1531,16 @@ export const VigiliaCore: React.FC<VigiliaCoreProps> = ({ userName }) => {
                     </div>
                     <div className="grid grid-cols-3 gap-2">
                         <div className="flex flex-col items-center">
-                            <input type="range" min="0" max="5" step="0.1" value={bandSensitivities.bass} onChange={(e) => handleBandSensitivityChange('bass', e.target.value)} className="h-20 w-1 bg-green-900 rounded-lg appearance-none cursor-pointer slider-vertical" style={{writingMode: 'vertical-lr', WebkitAppearance: 'slider-vertical'}} />
-                            <span className="text-[7px] mt-1 text-green-500">BASS</span>
+                            <input type="range" min="0" max="5" step="0.1" value={bandSensitivities.bass} onChange={(e) => handleBandSensitivityChange('bass', e.target.value)} className="h-20 w-3 bg-green-900 rounded-lg appearance-none cursor-pointer slider-vertical touch-manipulation" style={{writingMode: 'vertical-lr', WebkitAppearance: 'slider-vertical'}} />
+                            <span className="text-[8px] mt-1 text-green-500 font-bold">BASS</span>
                         </div>
                         <div className="flex flex-col items-center">
-                            <input type="range" min="0" max="5" step="0.1" value={bandSensitivities.mid} onChange={(e) => handleBandSensitivityChange('mid', e.target.value)} className="h-20 w-1 bg-green-900 rounded-lg appearance-none cursor-pointer slider-vertical" style={{writingMode: 'vertical-lr', WebkitAppearance: 'slider-vertical'}} />
-                            <span className="text-[7px] mt-1 text-green-500">MID</span>
+                            <input type="range" min="0" max="5" step="0.1" value={bandSensitivities.mid} onChange={(e) => handleBandSensitivityChange('mid', e.target.value)} className="h-20 w-3 bg-green-900 rounded-lg appearance-none cursor-pointer slider-vertical touch-manipulation" style={{writingMode: 'vertical-lr', WebkitAppearance: 'slider-vertical'}} />
+                            <span className="text-[8px] mt-1 text-green-500 font-bold">MID</span>
                         </div>
                         <div className="flex flex-col items-center">
-                            <input type="range" min="0" max="5" step="0.1" value={bandSensitivities.treble} onChange={(e) => handleBandSensitivityChange('treble', e.target.value)} className="h-20 w-1 bg-green-900 rounded-lg appearance-none cursor-pointer slider-vertical" style={{writingMode: 'vertical-lr', WebkitAppearance: 'slider-vertical'}} />
-                            <span className="text-[7px] mt-1 text-green-500">HI</span>
+                            <input type="range" min="0" max="5" step="0.1" value={bandSensitivities.treble} onChange={(e) => handleBandSensitivityChange('treble', e.target.value)} className="h-20 w-3 bg-green-900 rounded-lg appearance-none cursor-pointer slider-vertical touch-manipulation" style={{writingMode: 'vertical-lr', WebkitAppearance: 'slider-vertical'}} />
+                            <span className="text-[8px] mt-1 text-green-500 font-bold">HI</span>
                         </div>
                     </div>
                  </div>
@@ -1395,13 +1551,13 @@ export const VigiliaCore: React.FC<VigiliaCoreProps> = ({ userName }) => {
         <div className="border-t border-green-900/50 pt-2">
             <div className="flex justify-between items-center mb-2">
                 <h3 className="text-[10px] text-green-600 uppercase tracking-wider font-bold">Protocolo Visual</h3>
-                <button onClick={clearCanvas} className="text-[9px] flex items-center gap-1 text-green-700 hover:text-green-400 font-semibold"><Trash2 size={10}/> LIMPIAR</button>
+                <button onClick={clearCanvas} className="text-[9px] flex items-center gap-1 text-green-700 hover:text-green-400 font-semibold min-h-[32px] px-1"><Trash2 size={11}/> LIMPIAR</button>
             </div>
-            <div className="grid grid-cols-2 gap-1 mb-4">
+            <div className="grid grid-cols-2 gap-1.5 mb-4">
                 {Object.values(MODES).map(mode => (
                     <button key={mode.id} onClick={() => setActiveMode(mode.id)} 
-                        className={`text-[9px] py-2 px-2 text-left truncate transition-all border rounded-sm flex items-center gap-2 font-medium ${activeMode === mode.id ? 'bg-green-900/40 border-green-500 text-white' : 'border-neutral-800 text-neutral-500 hover:text-green-500 hover:border-green-900'}`}>
-                        {mode.icon} {mode.label}
+                        className={`text-[9px] py-2.5 px-2.5 text-left truncate transition-all border rounded-sm flex items-center gap-2 font-medium min-h-[44px] active:scale-95 ${activeMode === mode.id ? 'bg-green-900/40 border-green-500 text-white' : 'border-neutral-800 text-neutral-500 hover:text-green-500 hover:border-green-900'}`}>
+                        {mode.icon} <span className="truncate">{mode.label}</span>
                     </button>
                 ))}
             </div>

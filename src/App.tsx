@@ -3,62 +3,171 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { VigiliaCore } from './components/VigiliaCore';
 import { VigiliaFace } from './components/VigiliaFace';
-import { Eye, Terminal } from 'lucide-react';
+import { VigiliaAuth } from './components/VigiliaAuth';
+import { Eye, Terminal, Fingerprint, Maximize, Minimize, Activity } from 'lucide-react';
 
 export default function App() {
-  const [activeModule, setActiveModule] = useState<'CORE' | 'FACE'>('FACE');
+  const [activeModule, setActiveModule] = useState<'CORE' | 'FACE' | 'AUTH'>('FACE');
+  const [operatorName, setOperatorName] = useState<string>('OPERADOR');
+  const [isFullscreen, setIsFullscreen] = useState(false);
+
+  useEffect(() => {
+    const handleFullscreenChange = () => {
+      setIsFullscreen(Boolean(document.fullscreenElement));
+    };
+    document.addEventListener('fullscreenchange', handleFullscreenChange);
+    return () => document.removeEventListener('fullscreenchange', handleFullscreenChange);
+  }, []);
+
+  const toggleFullscreen = async () => {
+    try {
+      if (!document.fullscreenElement) {
+        await document.documentElement.requestFullscreen();
+      } else {
+        await document.exitFullscreen();
+      }
+    } catch {
+      // Fallback for browsers that restrict programmatic fullscreen
+    }
+  };
 
   return (
-    <div className="w-full h-[100dvh] flex flex-col bg-black overflow-hidden font-mono">
-      {/* Top Module Switcher Navigation */}
-      <nav className="h-10 bg-[#040805] border-b border-green-950 flex items-center justify-between px-3 z-50 flex-shrink-0 select-none">
-        <div className="flex items-center gap-3">
-          <span className="text-[10px] text-green-700 font-bold tracking-widest uppercase hidden sm:inline">
-            NÚCLEO COLECTIVO //
-          </span>
-          <div className="flex items-center gap-1">
-            <button
-              onClick={() => setActiveModule('CORE')}
-              className={`px-3 py-1 rounded text-[10px] font-bold tracking-wider flex items-center gap-1.5 transition-all ${
-                activeModule === 'CORE'
-                  ? 'bg-green-950 border border-green-500 text-white shadow-[0_0_10px_rgba(34,197,94,0.3)]'
-                  : 'text-neutral-500 hover:text-green-400 border border-transparent'
-              }`}
-            >
-              <Terminal size={11} /> 01 // KERNEL VIGILIA
-            </button>
+    <div className="w-full h-[100dvh] flex flex-col bg-black overflow-hidden font-mono select-none">
+      {/* Top Header Navigation */}
+      <header className="h-11 sm:h-12 bg-[#030604] border-b border-green-950 flex items-center justify-between px-3 sm:px-4 z-40 flex-shrink-0">
+        <div className="flex items-center gap-2 sm:gap-3">
+          <div className="flex items-center gap-1.5">
+            <span className="w-2 h-2 rounded-full bg-green-500 animate-pulse"></span>
+            <span className="text-xs sm:text-sm font-black tracking-widest text-white">
+              VIGILIA <span className="text-green-500 font-normal hidden xs:inline">// NÚCLEO COLECTIVO</span>
+            </span>
+          </div>
+
+          {/* Desktop/Tablet Module Tabs (Hidden on mobile phones, shown in bottom bar) */}
+          <nav className="hidden md:flex items-center gap-1.5 ml-4 pl-4 border-l border-green-950/80">
             <button
               onClick={() => setActiveModule('FACE')}
-              className={`px-3 py-1 rounded text-[10px] font-bold tracking-wider flex items-center gap-1.5 transition-all ${
+              className={`px-3 py-1.5 rounded-sm text-xs font-bold tracking-wider flex items-center gap-1.5 transition-all min-h-[36px] ${
                 activeModule === 'FACE'
-                  ? 'bg-green-950 border border-green-500 text-white shadow-[0_0_10px_rgba(34,197,94,0.3)]'
-                  : 'text-neutral-500 hover:text-green-400 border border-transparent'
+                  ? 'bg-green-950/80 border border-green-500 text-white shadow-[0_0_12px_rgba(34,197,94,0.3)]'
+                  : 'text-neutral-400 hover:text-green-400 border border-transparent hover:bg-green-950/30'
               }`}
             >
-              <Eye size={11} /> 02 // ROSTRO & MIRADA
+              <Eye size={13} className={activeModule === 'FACE' ? 'text-green-400' : ''} />
+              01 · ROSTRO & MIRADA
             </button>
-          </div>
+            <button
+              onClick={() => setActiveModule('CORE')}
+              className={`px-3 py-1.5 rounded-sm text-xs font-bold tracking-wider flex items-center gap-1.5 transition-all min-h-[36px] ${
+                activeModule === 'CORE'
+                  ? 'bg-green-950/80 border border-green-500 text-white shadow-[0_0_12px_rgba(34,197,94,0.3)]'
+                  : 'text-neutral-400 hover:text-green-400 border border-transparent hover:bg-green-950/30'
+              }`}
+            >
+              <Terminal size={13} className={activeModule === 'CORE' ? 'text-green-400' : ''} />
+              02 · KERNEL VIGILIA
+            </button>
+            <button
+              onClick={() => setActiveModule('AUTH')}
+              className={`px-2.5 py-1.5 rounded-sm text-xs font-bold tracking-wider flex items-center gap-1.5 transition-all min-h-[36px] ${
+                activeModule === 'AUTH'
+                  ? 'bg-green-950/80 border border-green-500 text-white shadow-[0_0_12px_rgba(34,197,94,0.3)]'
+                  : 'text-neutral-500 hover:text-green-400 border border-transparent hover:bg-green-950/30'
+              }`}
+              title="Protocolo Biométrico de Acceso"
+            >
+              <Fingerprint size={13} />
+              00 · PROTOCOLO
+            </button>
+          </nav>
         </div>
 
-        <div className="hidden sm:flex items-center gap-2 text-[9px] text-green-800">
-          <span className="w-1.5 h-1.5 rounded-full bg-green-500 animate-pulse"></span>
-          <span>ESTADO: VIGILIA EXPERIMENTAL ACTIVE</span>
+        {/* Right Status & Fullscreen Actions */}
+        <div className="flex items-center gap-2 sm:gap-3 text-[10px] text-green-500 font-mono">
+          <div className="hidden lg:flex items-center gap-1.5 bg-green-950/40 px-2 py-0.5 border border-green-900/60 rounded">
+            <Activity size={10} className="text-green-400" />
+            <span className="text-neutral-400">SUJETO:</span>
+            <span className="text-green-300 font-bold">{operatorName}</span>
+          </div>
+
+          <button
+            onClick={toggleFullscreen}
+            className="p-2 sm:px-2.5 sm:py-1 rounded border border-green-900/80 hover:border-green-500 text-neutral-400 hover:text-green-300 hover:bg-green-950/40 flex items-center gap-1 text-[10px] transition-all min-h-[36px] min-w-[36px] justify-center"
+            title="Alternar Pantalla Completa"
+          >
+            {isFullscreen ? <Minimize size={13} /> : <Maximize size={13} />}
+            <span className="hidden sm:inline">{isFullscreen ? 'SALIR' : 'FULLSCREEN'}</span>
+          </button>
         </div>
-      </nav>
+      </header>
 
       {/* Active Module View */}
-      <div className="flex-1 w-full h-[calc(100dvh-2.5rem)] overflow-hidden relative">
-        {activeModule === 'CORE' ? (
-          <VigiliaCore userName="OPERADOR" />
-        ) : (
-          <VigiliaFace />
+      <main className="flex-1 w-full h-[calc(100dvh-2.75rem)] md:h-[calc(100dvh-3rem)] pb-14 md:pb-0 overflow-hidden relative">
+        {activeModule === 'FACE' && <VigiliaFace />}
+        {activeModule === 'CORE' && <VigiliaCore userName={operatorName} />}
+        {activeModule === 'AUTH' && (
+          <VigiliaAuth
+            onAccessGranted={(name) => {
+              setOperatorName(name);
+              setActiveModule('FACE');
+            }}
+          />
         )}
-      </div>
+      </main>
+
+      {/* Mobile Fixed Bottom Tab Bar (Ergonomic Thumb-Zone Navigation) */}
+      <nav className="md:hidden fixed bottom-0 left-0 right-0 h-14 bg-[#030704]/95 backdrop-blur-md border-t border-green-950/90 z-50 flex items-center justify-around px-2 pb-safe select-none">
+        <button
+          onClick={() => setActiveModule('FACE')}
+          className={`flex-1 flex flex-col items-center justify-center py-1 min-h-[48px] rounded transition-all ${
+            activeModule === 'FACE'
+              ? 'text-white'
+              : 'text-neutral-500 hover:text-neutral-300'
+          }`}
+        >
+          <div className={`p-1 rounded-full ${activeModule === 'FACE' ? 'bg-green-950 text-green-400 border border-green-500/70 shadow-[0_0_10px_rgba(34,197,94,0.4)]' : ''}`}>
+            <Eye size={17} />
+          </div>
+          <span className={`text-[9px] font-bold tracking-tight mt-0.5 ${activeModule === 'FACE' ? 'text-green-300' : 'text-neutral-500'}`}>
+            ROSTRO
+          </span>
+        </button>
+
+        <button
+          onClick={() => setActiveModule('CORE')}
+          className={`flex-1 flex flex-col items-center justify-center py-1 min-h-[48px] rounded transition-all ${
+            activeModule === 'CORE'
+              ? 'text-white'
+              : 'text-neutral-500 hover:text-neutral-300'
+          }`}
+        >
+          <div className={`p-1 rounded-full ${activeModule === 'CORE' ? 'bg-green-950 text-green-400 border border-green-500/70 shadow-[0_0_10px_rgba(34,197,94,0.4)]' : ''}`}>
+            <Terminal size={17} />
+          </div>
+          <span className={`text-[9px] font-bold tracking-tight mt-0.5 ${activeModule === 'CORE' ? 'text-green-300' : 'text-neutral-500'}`}>
+            KERNEL
+          </span>
+        </button>
+
+        <button
+          onClick={() => setActiveModule('AUTH')}
+          className={`flex-1 flex flex-col items-center justify-center py-1 min-h-[48px] rounded transition-all ${
+            activeModule === 'AUTH'
+              ? 'text-white'
+              : 'text-neutral-500 hover:text-neutral-300'
+          }`}
+        >
+          <div className={`p-1 rounded-full ${activeModule === 'AUTH' ? 'bg-green-950 text-green-400 border border-green-500/70 shadow-[0_0_10px_rgba(34,197,94,0.4)]' : ''}`}>
+            <Fingerprint size={17} />
+          </div>
+          <span className={`text-[9px] font-bold tracking-tight mt-0.5 ${activeModule === 'AUTH' ? 'text-green-300' : 'text-neutral-500'}`}>
+            PROTOCOLO
+          </span>
+        </button>
+      </nav>
     </div>
   );
 }
-
-
